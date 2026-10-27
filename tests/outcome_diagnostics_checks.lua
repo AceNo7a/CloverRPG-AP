@@ -33,6 +33,9 @@ for i=1,100 do d:attempt({id=tostring(i)},"mock") end
 check(#d.rows==32,"retained track references are bounded")
 d:movement("START","fly",{mode="fly"})
 check(#d.flight==0 and #d.lifecycle==3,"new flight replaces sample trace but preserves prior stop records")
+check(#d.flightHistory==1 and d:export():find("PRIOR FLIGHT TRACE",1,true),"another flight retains earlier reset trace")
+for i=1,5 do d:note("flight","flight sample");d:movement("START","fly",{mode="fly"}) end
+check(#d.flightHistory==2,"flight history retains only two prior traces")
 local broken=factory({now=function() return now end,snapshot=function() error("missing instance") end})
 check(broken:snapshot():find("snapshot_unavailable",1,true),"snapshot failures stay diagnostic")
 check(d:export():find("overwritten=",1,true) and d:export():find("no authoritative",1,true),"export discloses bounds and evidence limits")

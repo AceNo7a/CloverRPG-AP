@@ -56,6 +56,8 @@ local function object(class, name, parent)
     local o = { ClassName = class, Name = name or class, Parent = parent, Visible = true }
     for _, key in ipairs({ "Activated", "InputBegan", "InputEnded", "InputChanged", "FocusLost", "AnimationPlayed", "HealthChanged", "Died", "StateChanged", "AncestryChanged", "ChildRemoved" }) do o[key] = signal() end
     function o:IsA(c) return self.ClassName == c end
+    function o:GetAttribute(key) return self.Attributes and self.Attributes[key] end
+    function o:GetAttributes() return self.Attributes or {} end
     function o:IsDescendantOf(ancestor)
         local p = self.Parent; while p do if p == ancestor then return true end; p = p.Parent end
         return false
@@ -159,7 +161,9 @@ ownAnimator.AnimationPlayed:Fire(animation("123456"))
 check(ui.diagnostics:export():find("SELF_ANIMATION",1,true),"own animation callbacks reach outcome diagnostics")
 
 click("Auto parry")
-local tr=swing(2); tr.TimePosition=.32; beat(2.32)
+local tr=swing(2); tr.TimePosition=.32; own.Attributes={State_Attacking=true}; beat(2.32)
+check(downs==1 and ui.diagnostics:export():find("WAIT_ACTION",1,true),"full script defers input during character action lock")
+own.Attributes.State_Attacking=false;tr.TimePosition=.35;beat(2.35)
 check(downs==2 and ui.enabled,"guard input still works with background audit")
 check(#ui.audit.lines>0 and not ui.audit.running and ui.audit.nextRun>300,"audit automatically runs once and schedules another bounded scan")
 beat(2.5)
@@ -178,7 +182,7 @@ tr=swing(6,"59998",otherAnimator)
 check(#ui.discovery.order==before+2,"recording continues with auto OFF")
 click("Copy logs")
 check(clipboard:find("CLOVER AUTO PARRY v6",1,true) and clipboard:find("CLOVER DISCOVERY v6",1,true)
- and clipboard:find("CLOVER MARKER LEARNING v6.7",1,true) and clipboard:find("BACKGROUND AUDIT",1,true) and clipboard:find("OUTCOME DIAGNOSTICS",1,true),"one export includes attempts, learning, discovery and audit")
+ and clipboard:find("CLOVER MARKER LEARNING v6.8",1,true) and clipboard:find("BACKGROUND AUDIT",1,true) and clipboard:find("OUTCOME DIAGNOSTICS",1,true),"one export includes attempts, learning, discovery and audit")
 setclipboard=nil; click("Copy logs")
 check(ui.export and ui.export.Text,"clipboard fallback remains available")
 ui.export.FocusLost:Fire(); setclipboard=function(v) clipboard=v end
@@ -277,6 +281,7 @@ game.JobId="attack-marker-tests"; environment.CloverParryOptions.useBundledProfi
 local npcs=object("Folder","NPCS",folder); local wolves=object("Folder","Wolf",npcs)
 asset(wolves,"Bite Pounce","124572427631698")
 asset(wolves,"Tail Sweep","73807165586659")
+asset(wolves,"Wolf1","125957249913572")
 for _,id in ipairs({"61001","61002","61003","61004","61005","61006","61007"}) do asset(combat,"Strike"..id,id) end
 now=500; dofile(path); ui=environment.CloverAutoParry; learner=ui.learning
 local function attackTrial(id,t,pos,opts)
@@ -369,9 +374,13 @@ local wolf,wa=rig('Wolf',9.63); workspace.DescendantAdded:Fire(wa)
 tr=swing(603,'124572427631698',wa); tr.Length=0; tr.TimePosition=.85; beat(603.85)
 check(downs==baseAttack+1 and ui.status:find('source=asset marker',1,true),"zero-length NPC playback can use verified asset marker at captured 9.63-stud distance")
 beat(604)
-wolf:FindFirstChild('HumanoidRootPart').Position=position(12.1)
-tr=swing(605,'73807165586659',wa); tr.Speed=1.1; tr.TimePosition=.88; beat(605.8)
-check(downs==baseAttack+1 and ui.status:find('range=12.00',1,true),"wolf allowance remains bounded at twelve studs")
+wolf:FindFirstChild('HumanoidRootPart').Position=position(14.97)
+learner.assets['125957249913572']={status='ready',position=.9,length=1.23}
+tr=swing(604.6,'125957249913572',wa); tr.TimePosition=.79; beat(605.39)
+check(downs==baseAttack+2,"captured 14.97-stud NPC wolf attack is covered")
+wolf:FindFirstChild('HumanoidRootPart').Position=position(16.1)
+tr=swing(607,'73807165586659',wa); tr.Speed=1.1; tr.TimePosition=.88; beat(607.8)
+check(downs==baseAttack+2 and ui.status:find('range=16.00',1,true),"wolf allowance remains bounded at sixteen studs")
 learner.assets['60002']={status='ready',position=.4}; learner.assets['60003']={status='ready',position=.4}
 check(not learner:position('60002') and not learner:position('60003'),"asset metadata never bypasses execution or movement filters")
 learner:sample('124572427631698',.96,false)
@@ -380,10 +389,12 @@ check(not learner.model.rows['73807165586659'],"metadata fallback does not fabri
 ui:Unload()
 game.JobId='expanded-bundle-test'; game.PlaceVersion=68598; environment.CloverParryOptions.useBundledProfiles=true
 asset(combat,'CollectedStrike','111510911006717')
+asset(combat,'HeavyGreatsword','11100915060')
 now=620; dofile(path);ui=environment.CloverAutoParry;learner=ui.learning
 check(math.abs(learner:position('111510911006717')-.4195835590362549)<1e-8,'new player timing available without local observations')
 check(math.abs(learner:position('124572427631698')-.9583326578140259)<1e-8 and select(2,learner:position('124572427631698'))=='bundled candidate','Bite Pounce uses the newly reviewed learned bundle')
 check(math.abs(learner:position('73807165586659')-1.0037524700164795)<1e-8,'Tail Sweep uses the newly reviewed learned bundle before asset fetch')
+check(math.abs(learner:position('11100915060')-.5333333611488342)<1e-8 and select(2,learner:position('11100915060'))=='bundled asset marker','Heavy Greatsword asset available with separate provenance')
 check(not learner.model.rows['124572427631698'] and not ui.storage.sent['111510911006717'],'bundles do not invent local samples or delivery acknowledgements')
 game.PlaceVersion=68599
 check(not learner:position('124572427631698') and not learner:position('111510911006717'),'both bundle sources disabled for other game versions')

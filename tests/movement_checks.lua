@@ -9,8 +9,10 @@ local h={Health=100,WalkSpeed=16,PlatformStand=false,AutoRotate=true,Sit=false,s
 function h:GetState() return "Enum.HumanoidStateType."..self.state end
 local created,destroyed,updates=0,0,0
 local throwCreate,throwUpdate=false,false
+local actionReason
 local m=factory({now=function() return now end,focused=function() return focused end,
     rig=function() return char,h,root end,velocity=function(speed) return speed end,
+    blockReason=function() return actionReason end,
     createFlight=function()
         if throwCreate then error("create failed") end
         created=created+1
@@ -23,6 +25,11 @@ local function tick() now=now+.11; m:tick() end
 check(m.mode=="off" and created==0,"movement starts off without creating physics objects")
 check(m:setMode("speed"),"speed starts on a live character")
 tick(); check(h.WalkSpeed==155,"speed is applied on normal movement")
+root.Anchored=true;tick();check(m.mode=="speed" and h.WalkSpeed==16,"anchored action pauses speed without disabling it")
+root.Anchored=false;tick();check(m.mode=="speed" and h.WalkSpeed==155,"speed resumes after anchor clears")
+actionReason="State_Attacking";h.WalkSpeed=13;tick()
+check(m.mode=="speed" and h.WalkSpeed==13,"speed preserves combat action movement restriction")
+actionReason=nil;h.WalkSpeed=16;tick();check(h.WalkSpeed==155,"speed resumes after combat action ends")
 h.WalkSpeed=24; tick(); check(h.WalkSpeed==155 and m.restoreSpeed==24,"sprint replacement is reapplied and remembered")
 m:stop("test"); check(h.WalkSpeed==24,"disable restores latest observed game speed")
 m:setMode("speed"); tick(); h.state="Climbing"; tick()

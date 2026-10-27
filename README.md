@@ -8,9 +8,19 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/AceNo7a/CloverRPG-AP/
 
 The GUI has six controls: **Auto parry**, **Test F**, **Copy logs**, **Unload**, **Fly**, and **Speed 155**. F7 toggles auto parry; F8 hides the panel. There are no target, distance, delay, learning or audit settings. All nearby NPCs and players are eligible targets. Losing focus or respawning turns automatic input OFF while background features continue. Unload stops the script and its background work.
 
+## Capture-based fixes (v6.8)
+
+The v6.7 capture showed five known NPC-wolf attacks skipped at13.66–14.97studs followed by damage123–140ms later. The four previously identified NPC Wolf attacks now use a bounded16-stud attempt range; players and all other moves remain8. This is a capture-based allowance, not a measured universal hitbox. Lead120ms and hold120ms remain unchanged.
+
+Automatic parry now waits for observed State_Attacking, State_Stunned, State_ParryCooldown or incapacitated humanoid states to clear. Waiting preserves the queued attack only inside its existing timing window and never past its impact marker; it does not cancel your attack, extend a stale opportunity or spend the local cooldown on a rejected press. State flags are observations, not a guarantee that the game will accept input. Avoid attacking through an incoming strike if you want to prioritize parrying.
+
+Speed stays enabled but pauses during temporary anchoring/seating and observed attack/block/parry/stun restrictions. It resumes when those restrictions clear. Flight still switches off on anchoring or character replacement. The reset capture showed character removal with last health122 and no recorded death or actuator error; the private reset cause is unresolved. No flight bypass is claimed. Two prior flight traces are now retained alongside the latest trace, and key combat state booleans are exported separately so long dynamic attribute names cannot hide them.
+
+Added asset-only Heavy Greatsword11100915060 at0.5333333611seconds, duration0.7166666389, corroborated by the capture's validated asset and Server/HeavyGreatsword path. Its observed playback was interrupted, so no learned samples were invented. Bundle now18 learned and21 asset candidates across21IDs.
+
 ## Reset and parry diagnostics (v6.7)
 
-Copy logs now includes **OUTCOME DIAGNOSTICS**, separate from the existing discovery/audit buffers. Lifecycle events (160 entries), last-flight samples (160 at up to4/second), and parry observations (300 entries) each show their own overwritten count. Starting another flight replaces its sample trace; existing lifecycle start/stop records remain. Copy immediately after a failure, before rerunning/unloading.
+Copy logs now includes **OUTCOME DIAGNOSTICS**, separate from the existing discovery/audit buffers. Lifecycle events (160 entries), last-flight samples (160 at up to4/second), and parry observations (300 entries) each show their own overwritten count. The latest flight and up to two prior sample traces are retained; existing lifecycle start/stop records remain. Copy immediately after a failure, before rerunning/unloading.
 
 Flight snapshots include health/state, position/velocity, root/character ancestry, anchoring, PlatformStand/AutoRotate, owned constraint presence/requested velocity, world destruction height, focus and network ping. Direct death, nonpositive-health, state, ancestry, character-added/removing and constraint-removal signals help distinguish death from character/root replacement. They cannot reveal a private server reset reason or prove anti-cheat enforcement.
 
@@ -26,7 +36,7 @@ Fly and Speed start OFF and are mutually exclusive. Fly uses camera-relative WAS
 
 Speed requests WalkSpeed 155 and checks for replacements every 0.1 seconds, so ordinary sprint changes can be followed without toggling it again. It pauses during climbing, swimming, seated/physics/ragdoll states and zero-speed action locks, then resumes when normal movement returns. A custom dodge controller may apply velocity independently of WalkSpeed; this does not replace such a controller. Disabling restores the latest observed game speed when the property still contains our value.
 
-Focus loss, death, character replacement, anchoring, seating and unload stop movement. It never auto-enables after respawn. Disable Infinite Yield's movement controls before testing to avoid conflicting writers. The reported 155/200 behavior is user observation, not a verified detection threshold. These are ordinary local movement changes, with no property spoofing or anti-detection guarantee. Copy logs includes a bounded MOVEMENT section with state changes, speed reapplications and stop/error reasons; it is not sent to Discord.
+Focus loss, death, character replacement and unload stop movement. Flight also stops on anchoring/seating; Speed pauses and resumes. It never auto-enables after respawn. Disable Infinite Yield's movement controls before testing to avoid conflicting writers. The reported 155/200 behavior is user observation, not a verified detection threshold. These are ordinary local movement changes, with no property spoofing or anti-detection guarantee. Copy logs includes a bounded MOVEMENT section with state changes, speed reapplications and stop/error reasons; it is not sent to Discord.
 
 Verified offline: 25 movement lifecycle assertions and 100 full-script integration assertions. Actual flight travel, dodge/climb behavior and server acceptance require live observation.
 
@@ -38,7 +48,7 @@ v6.5.1 includes **18 reviewed learned candidates and 20 asset candidates across 
 
 v6.1 accepts exact `HitWindow` and `Attack` marker names, plus identically named keyframes. This enables learning for the observed Wolf Bite Pounce and Tail Sweep animations without hardcoding their timings. Distinct signals within 25 ms of animation time count as one impact; repeated signals or separated impacts block that profile as ambiguous. Attack profiles use the same cache and reporting queue as HitWindow profiles.
 
-Distance and timing bounds remain internal: 8-stud input range, with a 12-stud allowance only for the four identified attacks on NPCs named Wolf, 40-stud observation radius, 0.7-second missed-attempt cooldown, 0.12-second F hold and 120 ms predictive lead converted using current playback speed. Players and other moves retain 8 studs. The wolf allowance addresses captured 8.03/9.63-stud skips; it is a bounded estimate, not a measured universal hitbox. Bundled candidates require place 8248288152/version 68598 and current combat classification. The script does not infer authoritative parry success or automatically optimize the lead based on success.
+Distance and timing bounds remain internal: 8-stud input range, with a 16-stud allowance only for the four identified attacks on NPCs named Wolf, 40-stud observation radius, 0.7-second missed-attempt cooldown, 0.12-second F hold and 120 ms predictive lead converted using current playback speed. Players and other moves retain 8 studs. The wolf allowance now addresses the captured 13.66–14.97-stud misses; it is a bounded estimate, not a measured universal hitbox. Bundled candidates require place 8248288152/version 68598 and current combat classification. The script does not infer authoritative parry success or automatically optimize the lead based on success.
 
 v6.3 also reads exact timing markers from animation assets when live callbacks are unavailable. Empty primary-provider clips trigger the sequence-provider fallback. All returned provider objects are cloned before inspection/cleanup; destroying shared provider instances could empty the local animation cache. The same combat classification applies, and looping, empty, oversized or ambiguous multi-impact clips are rejected. Up to 32 distinct combat assets are fetched per run with at most two outstanding requests. The four wolf IDs are requested at startup; other eligible IDs are requested when observed. Nothing is queued retroactively after a late asset result.
 
@@ -92,5 +102,6 @@ lua tests/profile_support_checks.lua clover_auto_parry.lua
 lua tests/asset_marker_checks.lua clover_auto_parry.lua
 lua tests/movement_checks.lua clover_auto_parry.lua
 lua tests/outcome_diagnostics_checks.lua clover_auto_parry.lua
+lua tests/action_lock_checks.lua clover_auto_parry.lua
 node relay/checks.mjs
 ```

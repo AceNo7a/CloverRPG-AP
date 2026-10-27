@@ -1,4 +1,4 @@
--- Clover auto parry v6.7: flight-reset and parry-outcome diagnostics; control timings unchanged.
+-- Clover auto parry v6.8: evidence-based wolf range and action-lock handling; retained flight diagnostics.
 -- Run this entire file. Starts OFF. No remote hooks or packet replay.
 -- Automatic reporting sends numeric timing candidates only; no remote code is fetched.
 -- Manual F timings are starting estimates, not measured server parry windows.
@@ -7,7 +7,7 @@
 -- BEGIN OUTCOME DIAGNOSTICS
 -- Client observations only. Never infer server acceptance from input or animation.
 local function newOutcomeDiagnostics(ctx)
-    local d={lifecycle={},flight={},parry={},dropped={lifecycle=0,flight=0,parry=0},
+    local d={lifecycle={},flight={},flightHistory={},parry={},dropped={lifecycle=0,flight=0,parry=0},
         rows={},serial=0,nextFlight=0,lastTick=nil,maxFrame=0,connections={}}
     function d:note(bucket,message)
         local list=self[bucket]; local cap=bucket=="parry" and 300 or 160
@@ -23,6 +23,10 @@ local function newOutcomeDiagnostics(ctx)
     end
     function d:movement(kind,detail,owner)
         if kind=="START" and owner.mode=="fly" then
+            if #self.flight>0 then
+                self.flightHistory[#self.flightHistory+1]="PRIOR FLIGHT TRACE overwritten="..self.dropped.flight.."\n"..table.concat(self.flight,"\n")
+                if #self.flightHistory>2 then table.remove(self.flightHistory,1) end
+            end
             self.flight={}; self.dropped.flight=0; self.nextFlight=0; self.maxFrame=0
         end
         self:life("MOVEMENT_"..kind,detail,owner)
@@ -83,6 +87,7 @@ local function newOutcomeDiagnostics(ctx)
         return "OUTCOME DIAGNOSTICS | client evidence; no authoritative reset reason or parry result\n"..
             "LIFECYCLE overwritten="..self.dropped.lifecycle.."\n"..table.concat(self.lifecycle,"\n")..
             "\nLAST FLIGHT TRACE overwritten="..self.dropped.flight.."\n"..table.concat(self.flight,"\n")..
+            "\n"..table.concat(self.flightHistory,"\n")..
             "\nPARRY OUTCOMES overwritten="..self.dropped.parry.."\n"..table.concat(self.parry,"\n")
     end
     return d
@@ -154,8 +159,8 @@ local function newMovementControl(ctx)
             if h~=self.humanoid or not h then self:stop("humanoid replaced or removed"); return end
             if r~=self.root or not r then self:stop("root replaced or removed"); return end
             if h.Health<=0 then self:stop("health nonpositive"); return end
-            if r.Anchored then self:stop("root anchored"); return end
-            if h.Sit then self:stop("seated"); return end
+            if self.mode=="fly" and r.Anchored then self:stop("root anchored"); return end
+            if self.mode=="fly" and h.Sit then self:stop("seated"); return end
             local stateName=tostring(h:GetState()):match("([^%.]+)$")
             if stateName~=self.lastState then
                 self:note("STATE "..stateName.." speed="..tostring(h.WalkSpeed)); self.lastState=stateName
@@ -173,11 +178,15 @@ local function newMovementControl(ctx)
             local current=h.WalkSpeed
             assert(finite(current),"invalid WalkSpeed")
             if current~=self.speed then self.restoreSpeed=current end
-            if suspended[stateName] or h.PlatformStand or current==0 then
+            local action=ctx.blockReason and ctx.blockReason(h,char)
+            if suspended[stateName] or h.PlatformStand or current==0 or r.Anchored or h.Sit or action then
                 if current==self.speed then h.WalkSpeed=self.restoreSpeed end
-                self.status="Speed paused · "..stateName
+                local reason=action or (r.Anchored and "root anchored") or (h.Sit and "seated") or stateName
+                if self.pauseReason~=reason then self:note("SPEED_PAUSE reason="..reason); self.pauseReason=reason end
+                self.status="Speed paused · "..reason
                 return
             end
+            if self.pauseReason then self:note("SPEED_RESUME after="..self.pauseReason); self.pauseReason=nil end
             if current~=self.speed then
                 self.resets=self.resets+1
                 if now-self.lastLog>=.5 then
@@ -200,6 +209,24 @@ end
 
 
 -- BEGIN TESTABLE CORE
+local function combatAttribute(h,char,key)
+    for _,obj in ipairs({char or false,h or false}) do
+        if obj then
+            local ok,value=pcall(function() return obj:GetAttribute(key) end)
+            if ok and value==true then return true end
+        end
+    end
+    return false
+end
+local function combatLock(h,char,forSpeed)
+    local ok,value=pcall(function() return tostring(h:GetState()):match("([^%.]+)$") end)
+    local disabled={Dead=true,Ragdoll=true,Physics=true,FallingDown=true,GettingUp=true,Seated=true,PlatformStanding=true}
+    if ok and disabled[value] then return "humanoid "..value end
+    local keys={"State_Stunned","State_Attacking"}
+    if forSpeed then keys[#keys+1]="State_Blocking"; keys[#keys+1]="State_Parrying"
+    else keys[#keys+1]="State_ParryCooldown" end
+    for _,key in ipairs(keys) do if combatAttribute(h,char,key) then return key end end
+end
 local function newScheduler()
     local s = { pending = {}, nextAllowed = 0 }
     function s:clear() self.pending = {} end
@@ -212,12 +239,18 @@ local function newScheduler()
     function s:step(now, cooldown, inspect, press)
         local choice, earliest
         for track, item in pairs(self.pending) do
-            local valid, position, speed, inRange = inspect(track, item)
+            local valid, position, speed, inRange, ready, blockedReason = inspect(track, item)
             local function skipped(reason) if self.onSkip then self.onSkip(item,reason) end end
             if not valid or now - item.created > (item.learned and 12 or 3)
                 or (item.hitPosition and position >= item.hitPosition)
                 or position > item.target + 0.08 * math.max(speed, 1) then
-                self.pending[track] = nil; skipped(not valid and "invalid/stopped/profile changed" or "expired/passed timing")
+                self.pending[track] = nil; skipped(not valid and "invalid/stopped/profile changed" or
+                    ("expired/passed timing"..(item.waitReason and (" blocked_by="..item.waitReason) or "")))
+            elseif speed>0 and position>=item.target and ready==false then
+                if item.waitReason~=blockedReason then
+                    item.waitReason=blockedReason or "action locked"
+                    if self.onWait then self.onWait(item,item.waitReason) end
+                end
             elseif speed > 0 and position >= item.target then
                 self.pending[track] = nil
                 if inRange and (not earliest or item.created < earliest) then
@@ -624,6 +657,7 @@ local bundledProfiles = {
     ["99787918237880"] = 0.3874998092651367,
 }
 local bundledAssetProfiles = {
+    ["11100915060"] = {position=0.5333333611488342,length=0.7166666388511658,provider="AnimationClipProvider"},
     ["10017994824"] = {position=0.5833333134651184,length=0.7166666388511658,provider="AnimationClipProvider"},
     ["10250846568"] = {position=0.21666666865348816,length=0.28333333134651184,provider="AnimationClipProvider"},
     ["107811934597910"] = {position=0.4166666567325592,length=0.8999999761581421,provider="AnimationClipProvider"},
@@ -689,7 +723,7 @@ local auditSeeds = { "86722279259826", "107811934597910", "122307357536158", "99
     "10017994824", "9839904022", "10017151218", "10036138066", "10028752861", "10059485766" }
 local order = { "86722279259826", "107811934597910", "122307357536158", "99787918237880" }
 local config = { radius = 8, cooldown = 0.7, hold = 0.12, offset = 0, guardsOnly = false, heavyTrial = false }
-local state = { version = 6, release = "6.7", alive = true, enabled = false, focused = true, connections = {}, animators = {},
+local state = { version = 6, release = "6.8", alive = true, enabled = false, focused = true, connections = {}, animators = {},
     logs = {}, attempts = 0, detected = 0, held = false, releaseAt = 0, testAt = nil }
 env.CloverAutoParry = state
 local scheduler = newScheduler()
@@ -869,6 +903,9 @@ local function inputAllowed()
 end
 local function press(item)
     local allowed,reason=inputAllowed()
+    local char=player.Character
+    local action=char and combatLock(char:FindFirstChildOfClass("Humanoid"),char,false)
+    if action then allowed=false; reason=action end
     if state.held or not allowed or UIS:IsKeyDown(Enum.KeyCode.F) then
         if diagnosticCall then diagnosticCall("note","parry","INPUT_REJECT attack="..item.id.." reason="..
             (state.held and "script already holds F" or (not allowed and reason or "F already down"))) end
@@ -902,6 +939,7 @@ local function root(model)
 end
 local movement=newMovementControl({
     now=os.clock,
+    blockReason=function(h,char) return combatLock(h,char,true) end,
     event=function(kind,detail,owner) if diagnosticCall then diagnosticCall("movement",kind,detail,owner) end end,
     focused=function() return state.alive and state.focused end,
     rig=function()
@@ -961,7 +999,7 @@ local function distance(actor)
 end
 local wolfIds={['125957249913572']=true,['73629219095110']=true,['124572427631698']=true,['73807165586659']=true}
 local function attackRange(item)
-    if wolfIds[item.id] and item.actor and item.actor.Name=="Wolf" and not Players:GetPlayerFromCharacter(item.actor) then return 12 end
+    if wolfIds[item.id] and item.actor and item.actor.Name=="Wolf" and not Players:GetPlayerFromCharacter(item.actor) then return 16 end
     return config.radius
 end
 local function diagnosticSnapshot(item,owner)
@@ -994,6 +1032,9 @@ local function diagnosticSnapshot(item,owner)
     field("scheduled_release_in_ms",function() return state.held and string.format("%.2f",(state.releaseAt-os.clock())*1000) or "not_held" end)
     field("network_ping_ms",function() return string.format("%.1f",player:GetNetworkPing()*1000) end)
     field("tool",function() local tool=char:FindFirstChildOfClass("Tool"); return tool and tool.Name or "none" end)
+    for _,key in ipairs({"State_Attacking","State_Stunned","State_ParryCooldown","State_Parrying","State_Blocking","State_ParriedAttack"}) do
+        field(key,function() return combatAttribute(h,char,key) end)
+    end
     field("combat_flags",function()
         local values={}
         for _,obj in ipairs({char,h}) do
@@ -1098,6 +1139,9 @@ local function bindDiagnosticCharacter()
 end
 
 
+scheduler.onWait=function(item,reason)
+    diagnosticCall("note","parry","WAIT_ACTION reason="..reason.." "..diagnostics:snapshot(item))
+end
 scheduler.onSkip=function(item,reason)
     local detail=""
     local ok,value=pcall(function()
@@ -1324,7 +1368,7 @@ function learning:tick(now)
 end
 function learning:export()
     for track,item in pairs(self.active) do self:trace("TRACK_AT_EXPORT",track,item) end
-    local lines={"CLOVER MARKER LEARNING v6.7 | place="..game.PlaceId,
+    local lines={"CLOVER MARKER LEARNING v6.8 | place="..game.PlaceId,
         "Accepted names: HitWindow, Attack. Movement and executions remain excluded.",
         "Ready = consistent marker position; NOT confirmed parry success. First encounters are not protected by learning.",
         "lead_seconds="..self.lead.." enabled="..tostring(self.enabled).." skipped_tracks="..self.skipped.." overwritten_diagnostics="..self.overwritten,
@@ -1518,7 +1562,7 @@ local function text(y, h, value)
         BackgroundTransparency = 1, Text = value, TextColor3 = Color3.fromRGB(226, 232, 245),
         Font = Enum.Font.Gotham, TextSize = 13, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left })
 end
-local title=text(10,26,"Clover Auto Parry v6.7")
+local title=text(10,26,"Clover Auto Parry v6.8")
 title.Active=true
 text(40,36,"NPCs + players · automatic learning and recording\nF7 toggles auto parry; F8 hides this panel.")
 local function button(x,y,w,caption,callback)
@@ -1664,7 +1708,7 @@ connect(RunService.Heartbeat, function()
         end
         if state.enabled and inputAllowed() then
             scheduler:step(now, config.cooldown, function(track, item)
-                local good, valid, position, speed, inRange = pcall(function()
+                local good, valid, position, speed, inRange, ready, blockedReason = pcall(function()
                     local validLearning=true
                     if item.learned then
                         item.target=item.hitPosition-track.Speed*(learning.lead-config.offset)
@@ -1672,11 +1716,13 @@ connect(RunService.Heartbeat, function()
                         local observation=learning.active[track]
                         if observation and (observation.invalid or observation.multiple) then validLearning=false end
                     end
+                    local char=player.Character
+                    local block=char and combatLock(char:FindFirstChildOfClass("Humanoid"),char,false)
                     return validLearning and learning:allowed(item.id) and eligible(item.actor) and track.IsPlaying and not track.Looped,
-                        track.TimePosition, track.Speed, distance(item.actor) <= attackRange(item)
+                        track.TimePosition, track.Speed, distance(item.actor) <= attackRange(item),block==nil,block
                 end)
                 if not good then return false, 0, 0, false end
-                return valid, position, speed, inRange
+                return valid, position, speed, inRange, ready, blockedReason
             end, press)
         else scheduler:clear() end
         toggle.Text = state.enabled and "Auto parry: ON" or "Auto parry: OFF"

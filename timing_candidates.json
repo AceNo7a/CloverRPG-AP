@@ -213,6 +213,12 @@
       "marker": 0.3499999940395355,
       "length": 0.5166666507720947,
       "provider": "AnimationClipProvider"
+    },
+    "11100915060": {
+      "marker": 0.5333333611488342,
+      "length": 0.7166666388511658,
+      "provider": "AnimationClipProvider",
+      "provenance": "2026-10-27 user asset report; corroborated v6.7 validated asset and Server/HeavyGreatsword path; live playback interrupted"
     }
   }
 }
