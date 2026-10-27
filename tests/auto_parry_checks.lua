@@ -169,7 +169,7 @@ tr=swing(6,"59998",otherAnimator)
 check(#ui.discovery.order==before+2,"recording continues with auto OFF")
 click("Copy logs")
 check(clipboard:find("CLOVER AUTO PARRY v6",1,true) and clipboard:find("CLOVER DISCOVERY v6",1,true)
- and clipboard:find("CLOVER HITWINDOW LEARNING v6",1,true) and clipboard:find("BACKGROUND AUDIT",1,true),"one export includes attempts, learning, discovery and audit")
+ and clipboard:find("CLOVER MARKER LEARNING v6.1",1,true) and clipboard:find("BACKGROUND AUDIT",1,true),"one export includes attempts, learning, discovery and audit")
 setclipboard=nil; click("Copy logs")
 check(ui.export and ui.export.Text,"clipboard fallback remains available")
 ui.export.FocusLost:Fire(); setclipboard=function(v) clipboard=v end
@@ -213,7 +213,7 @@ check(not learner:position("60001") and downs==initial,"first unknown observatio
 trial("60001",23,.4,{duplicate=true})
 check(learner:position("60001")==.4 and #learner.model.rows["60001"].samples==2,"two complete observations qualify; paired signals deduplicated")
 click("Auto parry"); tr=swing(25,"60001",otherAnimator); tr.TimePosition=.29; beat(25.29)
-check(downs==initial+1 and ui.status:find("learned HitWindow",1,true),"learned player timing produces F without configuring target or delay")
+check(downs==initial+1 and ui.status:find("learned combat marker",1,true),"learned player timing produces F without configuring target or delay")
 beat(25.5)
 tr=swing(27,"60001",otherAnimator); tr.Speed=2; tr.TimePosition=.17; beat(27.085)
 check(downs==initial+2,"learned prediction follows playback speed")
@@ -258,5 +258,59 @@ check(downs==base+2,"ready local profile overrides bundled timing")
 beat(407.6); click("Auto parry"); trial("86722279259826",409,.7)
 click("Auto parry"); tr=swing(411); tr.TimePosition=.32; beat(411.32)
 check(downs==base+2,"variable local profile cannot fall back to preset")
+ui:Unload()
+-- Attack markers follow the same classified, complete-playback pipeline as HitWindow.
+game.JobId="attack-marker-tests"; environment.CloverParryOptions.useBundledProfiles=false
+local npcs=object("Folder","NPCS",folder); local wolves=object("Folder","Wolf",npcs)
+asset(wolves,"Bite Pounce","124572427631698")
+asset(wolves,"Tail Sweep","73807165586659")
+for _,id in ipairs({"61001","61002","61003","61004","61005","61006","61007"}) do asset(combat,"Strike"..id,id) end
+now=500; dofile(path); ui=environment.CloverAutoParry; learner=ui.learning
+local function attackTrial(id,t,pos,opts)
+ opts=opts or {}; local tr=animation(id); tr.Length=opts.length or 1.7; tr.Speed=opts.speed or 1
+ tr.Looped=opts.loop or false; now=t; otherAnimator.AnimationPlayed:Fire(tr)
+ now=t+pos/tr.Speed; tr.TimePosition=pos
+ if opts.keyframe then tr.KeyframeReached:Fire("Attack") else tr:GetMarkerReachedSignal("Attack"):Fire("") end
+ if opts.pair then tr.KeyframeReached:Fire("Attack") end
+ if opts.alias then tr:GetMarkerReachedSignal("HitWindow"):Fire("") end
+ if opts.repeatSignal then tr:GetMarkerReachedSignal("Attack"):Fire("") end
+ if opts.separate then tr.TimePosition=pos+.15; tr:GetMarkerReachedSignal("HitWindow"):Fire("") end
+ now=t+tr.Length/tr.Speed; tr.TimePosition=opts.incomplete and pos or tr.Length; tr.IsPlaying=false; tr.Stopped:Fire()
+ return tr
+end
+local baseAttack=downs
+attackTrial("124572427631698",501,.9583); check(not learner:position("124572427631698"),"first Bite Pounce sample remains collecting")
+attackTrial("124572427631698",504,.9625)
+check(math.abs(learner:position("124572427631698")-.9583)<.00001,"two Attack-marked Bite Pounces qualify")
+attackTrial("73807165586659",507,1.0038,{speed=1.1}); attackTrial("73807165586659",510,1.0038,{speed=1.1})
+check(learner:position("73807165586659")==1.0038,"Tail Sweep retains animation position rather than wall-clock time")
+click("Auto parry"); tr=swing(513,"124572427631698",otherAnimator); tr.Length=1.7; tr.TimePosition=.83; beat(513.83)
+check(downs==baseAttack,"Bite Pounce waits until learned lead threshold")
+tr.TimePosition=.85; beat(513.85); check(downs==baseAttack+1,"Bite Pounce sends F on a later Attack-learned playback")
+beat(514)
+tr=swing(516,"73807165586659",otherAnimator); tr.Length=1.7; tr.Speed=1.1; tr.TimePosition=.88; beat(516.8)
+check(downs==baseAttack+2,"Tail Sweep prediction accounts for playback speed")
+beat(517); click("Auto parry")
+attackTrial("60002",518,.4); attackTrial("60002",521,.4)
+attackTrial("60003",524,.4); attackTrial("60003",527,.4)
+check(not learner.model.rows["60002"] and not learner.model.rows["60003"],"Attack markers cannot enable executions or movement")
+attackTrial("61999",530,.4); check(not learner.model.rows["61999"],"unclassified Attack animation remains excluded")
+attackTrial("61001",533,.4,{incomplete=true}); attackTrial("61001",536,.4,{incomplete=true})
+check(not learner:position("61001"),"interrupted Attack playback cannot qualify")
+attackTrial("61002",539,.4,{loop=true}); check(not learner.model.rows["61002"],"looping Attack playback remains excluded")
+attackTrial("61003",542,.4,{pair=true,alias=true}); attackTrial("61003",545,.4,{pair=true,alias=true})
+check(learner:position("61003")==.4 and #learner.model.rows["61003"].samples==2,"coincident Attack/HitWindow/keyframe signals count once per playback")
+attackTrial("61004",548,.4,{pair=true,repeatSignal=true})
+check(learner.model.rows["61004"].blocked,"repeated signal remains ambiguous even after a keyframe pair")
+attackTrial("61005",551,.4,{separate=true})
+check(learner.model.rows["61005"].blocked,"separated Attack and HitWindow impacts block the profile")
+attackTrial("61006",554,.4,{keyframe=true}); attackTrial("61006",557,.4,{keyframe=true})
+check(learner:position("61006")==.4,"named Attack keyframes are supported")
+attackTrial("61007",560,.4); attackTrial("61007",563,.7)
+check(not learner:position("61007"),"variable Attack timing remains inactive")
+local payload=ui.storage:batch(learner.model.rows,function(id) return learner:allowed(id) end)
+local reported={}; for _,row in ipairs(payload.profiles) do reported[row.id]=true end
+check(reported["124572427631698"] and reported["73807165586659"],"ready Attack profiles enter ordinary timing-report queue")
+check(learner:export():find("name=Attack",1,true),"learning log identifies the observed Attack marker")
 ui:Unload()
 print("PASS: "..count.." auto-parry offline assertions. Combat success unverified.")

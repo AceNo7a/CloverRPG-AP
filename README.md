@@ -1,6 +1,6 @@
 # CloverRPG-AP
 
-Experimental automatic F input using learned HitWindow positions. Auto parry starts **OFF**; learning, discovery, recording, periodic auditing and timing reporting run automatically while the script is loaded.
+Experimental automatic F input using learned `HitWindow` and `Attack` positions. Auto parry starts **OFF**; learning, discovery, recording, periodic auditing and timing reporting run automatically while the script is loaded.
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/AceNo7a/CloverRPG-AP/main/clover_auto_parry.lua"))()
@@ -11,6 +11,8 @@ The GUI has four controls: **Auto parry**, **Test F**, **Copy logs**, and **Unlo
 ## Automatic learning
 
 Two consistent completed combat playbacks establish a local timing profile. Continued observations update the median and spread of the last five samples. Ready local profiles override the seven bundled candidates and guard presets. Collecting, variable or multiple-marker local profiles suppress preset fallback until qualified. Executions, movement, reactions, unclassified animations, loops, interrupted clips and detected seeks remain excluded.
+
+v6.1 accepts exact `HitWindow` and `Attack` marker names, plus identically named keyframes. This enables learning for the observed Wolf Bite Pounce and Tail Sweep animations without hardcoding their timings. Distinct signals within 25 ms of animation time count as one impact; repeated signals or separated impacts block that profile as ambiguous. Attack profiles use the same cache and reporting queue as HitWindow profiles.
 
 Distance and timing bounds remain internal: 8-stud input range, 40-stud observation radius, 0.7-second missed-attempt cooldown, 0.12-second F hold and 120 ms predictive lead converted using current playback speed. These are implementation defaults, not a guaranteed parry window. Bundled candidates require place 8248288152/version 68598 and current combat classification. The script does not infer authoritative parry success or automatically optimize the lead based on success.
 
@@ -29,6 +31,8 @@ The client sends at most six changed profiles per batch, at least 60 seconds apa
 Reports are untrusted candidates, not proof of successful parries or independent observers. They **do not automatically modify GitHub**. Maintainers review Discord evidence before updating `bundledProfiles` and its game-version scope. Rerun the loader to receive a release update.
 
 ## Verification
+
+v6.1 (2026-10-27): 74 auto-parry assertions passed, including simulated Bite Pounce and Tail Sweep learning, playback-speed conversion, duplicate signals, multiple impacts, and movement/execution exclusions. Live combat performance of these two moves remains unverified.
 
 v6 (2026-10-27): 119 Lua assertions and 17 relay assertions passed. Live Madium checks confirmed four buttons, zero settings fields, learning/recording/reporting ON, a completed 1,442-line bounded audit, and delivery of one real learned profile through the public relay to Discord. Public unauthenticated GET returned 200 and invalid POST returned 400. Auto input was left OFF.
 

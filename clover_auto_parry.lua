@@ -1,4 +1,4 @@
--- Clover auto parry v6: experimental HitWindow learning for later encounters.
+-- Clover auto parry v6.1: experimental HitWindow/Attack learning for later encounters.
 -- Run this entire file. Starts OFF. No remote hooks or packet replay.
 -- Automatic reporting sends numeric timing candidates only; no remote code is fetched.
 -- Manual F timings are starting estimates, not measured server parry windows.
@@ -77,7 +77,7 @@ local function newHitWindowModel(rows)
             if n >= 256 then return "profile limit" end
             row = { samples = {}, status = "collecting" }; self.rows[id] = row
         end
-        if multiple then row.status = "multiple HitWindows"; row.blocked = true; return row.status end
+        if multiple then row.status = "multiple timing markers"; row.blocked = true; return row.status end
         if row.blocked then return row.status end
         if type(position) ~= "number" or position ~= position or position < .03 or position > 8 then return "invalid position" end
         row.samples[#row.samples+1] = position
@@ -178,7 +178,7 @@ local function newProfileSupport(options)
             end
         end
         return {schema=1,version=6,place=options.place,placeVersion=options.placeVersion,
-            evidence="consistent HitWindow; parry success unverified",profiles=out},keys
+            evidence="consistent combat marker; parry success unverified",profiles=out},keys
     end
     function p:tick(now, rows, allowed)
         if self.busy then return end
@@ -377,7 +377,7 @@ local auditSeeds = { "86722279259826", "107811934597910", "122307357536158", "99
     "10017994824", "9839904022", "10017151218", "10036138066", "10028752861", "10059485766" }
 local order = { "86722279259826", "107811934597910", "122307357536158", "99787918237880" }
 local config = { radius = 8, cooldown = 0.7, hold = 0.12, offset = 0, guardsOnly = false, heavyTrial = false }
-local state = { version = 6, alive = true, enabled = false, focused = true, connections = {}, animators = {},
+local state = { version = 6, release = "6.1", alive = true, enabled = false, focused = true, connections = {}, animators = {},
     logs = {}, attempts = 0, detected = 0, held = false, releaseAt = 0, testAt = nil }
 env.CloverAutoParry = state
 local scheduler = newScheduler()
@@ -563,7 +563,7 @@ local function press(item)
     state.attempts = state.attempts + 1
     discovery:mark("AUTO_F_DOWN_ATTEMPT id=" .. item.id)
     log("F attempted: " .. item.id .. " / " .. (item.actor and item.actor.Name or "manual test") ..
-        (item.learned and (" / learned HitWindow / source="..(item.source or "learned").." / marker="..item.hitPosition.." / lead="..learning.lead) or " / preset or test"))
+        (item.learned and (" / learned combat marker / source="..(item.source or "learned").." / marker="..item.hitPosition.." / lead="..learning.lead) or " / preset or test"))
     return true
 end
 local function stop(reason)
@@ -659,24 +659,28 @@ function learning:observe(actor, track, id)
     if not self:allowed(id) then return end
     if not tostring(track.Priority):find("Action",1,true) or track.TimePosition > .05 then return end
     if self.activeCount >= 64 then self.skipped=self.skipped+1; return end
-    local item={ id=id, actor=actor, started=os.clock(), connections={}, maximum=track.TimePosition,
+    local item={ id=id, actor=actor, started=os.clock(), connections={}, seenSignals={}, maximum=track.TimePosition,
         previous=track.TimePosition, lastTime=os.clock(), lastSpeed=track.Speed }
     self.active[track]=item; self.activeCount=self.activeCount+1
-    local function reached(source)
+    local function reached(source, name)
         if self.active[track] ~= item or not self.enabled then return end
         local ok, err=pcall(function()
             local position=track.TimePosition
             if track.Looped or track.Speed <= 0 or position < .03 or position > 8 then item.invalid=true; return end
             item.maximum=math.max(item.maximum,position)
+            local signalKey=source..":"..name
             if item.position then
-                -- A named keyframe and marker at the same location are one observation.
-                if item.source ~= source and math.abs(position-item.position) <= .025 then return end
+                -- Distinct signals at the same impact count once, including marker/keyframe pairs.
+                -- A repeated signal or a separated impact remains ambiguous and blocks the profile.
+                if not item.seenSignals[signalKey] and math.abs(position-item.position) <= .025 then
+                    item.seenSignals[signalKey]=true; return
+                end
                 item.multiple=true
                 self:sample(id,position,true)
-                self:note("BLOCKED id="..id.." multiple HitWindows")
+                self:note("BLOCKED id="..id.." multiple timing markers")
             else
-                item.position=position; item.source=source
-                self:note(string.format("HITWINDOW id=%s pos=%.5f source=%s",id,position,source))
+                item.position=position; item.source=source; item.seenSignals[signalKey]=true
+                self:note(string.format("TIMING_MARKER id=%s name=%s pos=%.5f source=%s",id,name,position,source))
             end
         end)
         if not ok then item.invalid=true; self:note("MARKER_ERROR "..clean(err)) end
@@ -698,8 +702,16 @@ function learning:observe(actor, track, id)
         if ok then item.connections[#item.connections+1]=c end
         return ok
     end
-    local markerOK=listen(function() return track:GetMarkerReachedSignal("HitWindow") end,function() reached("marker") end)
-    local keyframeOK=listen(function() return track.KeyframeReached end,function(name) if name=="HitWindow" then reached("keyframe") end end)
+    local markerOK=false
+    for _,name in ipairs({"HitWindow","Attack"}) do
+        local markerName=name
+        local available=listen(function() return track:GetMarkerReachedSignal(markerName) end,
+            function() reached("marker",markerName) end)
+        markerOK=available or markerOK
+    end
+    local keyframeOK=listen(function() return track.KeyframeReached end,function(name)
+        if name=="HitWindow" or name=="Attack" then reached("keyframe",name) end
+    end)
     local stopOK=listen(function() return track.Stopped end,finish)
     if not stopOK or (not markerOK and not keyframeOK) then
         self:note("UNSUPPORTED_TRACK id="..id); self:disconnect(track)
@@ -721,7 +733,8 @@ function learning:tick(now)
     for _,track in ipairs(remove) do self:disconnect(track) end
 end
 function learning:export()
-    local lines={"CLOVER HITWINDOW LEARNING v6 | place="..game.PlaceId,
+    local lines={"CLOVER MARKER LEARNING v6.1 | place="..game.PlaceId,
+        "Accepted names: HitWindow, Attack. Movement and executions remain excluded.",
         "Ready = consistent marker position; NOT confirmed parry success. First encounters are not protected by learning.",
         "lead_seconds="..self.lead.." enabled="..tostring(self.enabled).." skipped_tracks="..self.skipped,
         self.registryStatus or "Registry not checked",storage.diskStatus.." | "..storage.status}
@@ -890,7 +903,7 @@ local function text(y, h, value)
         BackgroundTransparency = 1, Text = value, TextColor3 = Color3.fromRGB(226, 232, 245),
         Font = Enum.Font.Gotham, TextSize = 13, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left })
 end
-local title=text(10,26,"Clover Auto Parry v6")
+local title=text(10,26,"Clover Auto Parry v6.1")
 title.Active=true
 text(40,36,"NPCs + players · automatic learning and recording\nF7 toggles auto parry; F8 hides this panel.")
 local function button(x,y,w,caption,callback)

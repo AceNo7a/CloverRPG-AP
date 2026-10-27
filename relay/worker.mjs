@@ -15,7 +15,7 @@ export function validate(data) {
   }
   // Strictly rebuild the outbound payload: names, logs and arbitrary text cannot pass through.
   return {schema:1,version:data.version,place:data.place,placeVersion:data.placeVersion,
-    evidence:'Untrusted client candidate; HitWindow consistency, NOT verified parry success',profiles};
+    evidence:'Untrusted client candidate; combat-marker consistency, NOT verified parry success',profiles};
 }
 
 export default {
