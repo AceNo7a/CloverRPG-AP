@@ -6,7 +6,17 @@ Experimental automatic F input using learned `HitWindow` and `Attack` positions.
 loadstring(game:HttpGet("https://raw.githubusercontent.com/AceNo7a/CloverRPG-AP/main/clover_auto_parry.lua"))()
 ```
 
-The GUI has four controls: **Auto parry**, **Test F**, **Copy logs**, and **Unload**. F7 toggles auto parry; F8 hides the panel. There are no target, distance, delay, learning or audit settings. All nearby NPCs and players are eligible targets. Losing focus or respawning turns automatic input OFF while background features continue. Unload stops the script and its background work.
+The GUI has six controls: **Auto parry**, **Test F**, **Copy logs**, **Unload**, **Fly**, and **Speed 155**. F7 toggles auto parry; F8 hides the panel. There are no target, distance, delay, learning or audit settings. All nearby NPCs and players are eligible targets. Losing focus or respawning turns automatic input OFF while background features continue. Unload stops the script and its background work.
+
+## Optional movement (v6.6)
+
+Fly and Speed start OFF and are mutually exclusive. Fly uses camera-relative WASD, E up and Q down at 32 studs/second; typing holds the flight actuator at zero velocity. It uses a local [LinearVelocity constraint](https://create.roblox.com/docs/physics/constraints/linear-velocity) and temporarily changes PlatformStand/AutoRotate. It retains collisions. Switching off removes owned objects and restores owned character settings. Flight stops if the game replaces its humanoid state; it does not continually force that state back.
+
+Speed requests WalkSpeed 155 and checks for replacements every 0.1 seconds, so ordinary sprint changes can be followed without toggling it again. It pauses during climbing, swimming, seated/physics/ragdoll states and zero-speed action locks, then resumes when normal movement returns. A custom dodge controller may apply velocity independently of WalkSpeed; this does not replace such a controller. Disabling restores the latest observed game speed when the property still contains our value.
+
+Focus loss, death, character replacement, anchoring, seating and unload stop movement. It never auto-enables after respawn. Disable Infinite Yield's movement controls before testing to avoid conflicting writers. The reported 155/200 behavior is user observation, not a verified detection threshold. These are ordinary local movement changes, with no property spoofing or anti-detection guarantee. Copy logs includes a bounded MOVEMENT section with state changes, speed reapplications and stop/error reasons; it is not sent to Discord.
+
+Verified offline: 25 movement lifecycle assertions and 100 full-script integration assertions. Actual flight travel, dodge/climb behavior and server acceptance require live observation.
 
 ## Automatic learning
 
@@ -68,5 +78,6 @@ lua tests/hitwindow_model_checks.lua clover_auto_parry.lua
 lua tests/timing_audit_checks.lua clover_auto_parry.lua
 lua tests/profile_support_checks.lua clover_auto_parry.lua
 lua tests/asset_marker_checks.lua clover_auto_parry.lua
+lua tests/movement_checks.lua clover_auto_parry.lua
 node relay/checks.mjs
 ```

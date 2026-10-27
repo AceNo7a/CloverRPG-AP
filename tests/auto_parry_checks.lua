@@ -142,7 +142,7 @@ for _,o in ipairs(ui.gui:GetDescendants()) do
  if o:IsA("TextButton") then buttons=buttons+1 end
  if o:IsA("TextBox") then fields=fields+1 end
 end
-check(buttons==4 and fields==0,"GUI has four controls and no configurable fields")
+check(buttons==6 and fields==0,"GUI has six controls and no configurable fields")
 check(not ui.enabled and ui.learning.enabled and ui.discovery.enabled,"auto starts OFF; learning and recording permanently ON")
 input.InputBegan:Fire({KeyCode="F6"},false)
 check(ui.discovery.enabled,"F6 cannot disable background recording")
@@ -169,7 +169,7 @@ tr=swing(6,"59998",otherAnimator)
 check(#ui.discovery.order==before+2,"recording continues with auto OFF")
 click("Copy logs")
 check(clipboard:find("CLOVER AUTO PARRY v6",1,true) and clipboard:find("CLOVER DISCOVERY v6",1,true)
- and clipboard:find("CLOVER MARKER LEARNING v6.5.1",1,true) and clipboard:find("BACKGROUND AUDIT",1,true),"one export includes attempts, learning, discovery and audit")
+ and clipboard:find("CLOVER MARKER LEARNING v6.6",1,true) and clipboard:find("BACKGROUND AUDIT",1,true),"one export includes attempts, learning, discovery and audit")
 setclipboard=nil; click("Copy logs")
 check(ui.export and ui.export.Text,"clipboard fallback remains available")
 ui.export.FocusLost:Fire(); setclipboard=function(v) clipboard=v end

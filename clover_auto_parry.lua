@@ -1,8 +1,112 @@
--- Clover auto parry v6.5.1: reviewed learned/asset bundles with separate discovery reporting.
+-- Clover auto parry v6.6: optional flight/speed controls and reviewed timing bundles.
 -- Run this entire file. Starts OFF. No remote hooks or packet replay.
 -- Automatic reporting sends numeric timing candidates only; no remote code is fetched.
 -- Manual F timings are starting estimates, not measured server parry windows.
 -- Learned positions take priority. Bundled candidates remain unverified for parry success.
+
+-- BEGIN MOVEMENT CONTROLLER
+-- Explicit local controls; no property spoofing, remote hooks or detection bypass.
+local function newMovementControl(ctx)
+    local m={mode="off",speed=155,flySpeed=32,events={},status="Movement OFF",nextSpeed=0,resets=0}
+    local suspended={Climbing=true,Swimming=true,Seated=true,Physics=true,Ragdoll=true,
+        FallingDown=true,PlatformStanding=true,Dead=true}
+    local function finite(n) return type(n)=="number" and n==n and n>=0 and n<10000 end
+    function m:note(message)
+        self.events[#self.events+1]=string.format("[%.6f] %s",ctx.now(),message)
+        if #self.events>100 then table.remove(self.events,1) end
+    end
+    function m:stop(reason)
+        local previous=self.mode; self.mode="off"
+        if self.flight then pcall(self.flight.destroy); self.flight=nil end
+        local h=self.humanoid
+        if h then
+            -- Restore only properties still holding values written by this controller.
+            pcall(function()
+                if previous=="speed" and h.WalkSpeed==self.speed and finite(self.restoreSpeed) then h.WalkSpeed=self.restoreSpeed end
+            end)
+            if previous=="fly" then
+                pcall(function() if h.PlatformStand==true then h.PlatformStand=self.restoreStand end end)
+                pcall(function() if h.AutoRotate==false then h.AutoRotate=self.restoreRotate end end)
+            end
+        end
+        self.humanoid=nil; self.root=nil; self.character=nil
+        self.status="Movement OFF · "..(reason or "disabled")
+        if previous~="off" then self:note("STOP mode="..previous.." reason="..(reason or "disabled")) end
+    end
+    function m:setMode(mode)
+        if mode==self.mode or mode=="off" then self:stop("toggle"); return true end
+        self:stop("mode switch")
+        local ok,err=pcall(function()
+            assert(mode=="fly" or mode=="speed","unknown movement mode")
+            assert(ctx.focused(),"game is not focused")
+            local char,h,r=ctx.rig()
+            assert(char and h and r and h.Health>0 and not r.Anchored,"character is unavailable")
+            assert(not h.Sit,"leave the seat first")
+            assert(finite(h.WalkSpeed),"WalkSpeed unavailable")
+            self.character=char; self.humanoid=h; self.root=r
+            self.restoreSpeed=h.WalkSpeed; self.restoreStand=h.PlatformStand; self.restoreRotate=h.AutoRotate
+            self.mode=mode; self.nextSpeed=0; self.lastState=nil; self.lastLog=-math.huge
+            if mode=="fly" then
+                self.flight=ctx.createFlight(r)
+                h.PlatformStand=true; h.AutoRotate=false
+            end
+            self.status=mode=="fly" and "Fly 32 · WASD, E up / Q down" or "Speed 155 · waiting for normal movement"
+            self:note("START mode="..mode.." original_speed="..tostring(h.WalkSpeed))
+        end)
+        if not ok then self:stop("start failed: "..tostring(err)); self:note(self.status) end
+        return ok
+    end
+    function m:tick()
+        if self.mode=="off" then return end
+        local ok,err=pcall(function()
+            local char,h,r=ctx.rig()
+            if not ctx.focused() then self:stop("focus lost"); return end
+            if char~=self.character or h~=self.humanoid or r~=self.root or not h or h.Health<=0 then
+                self:stop("character changed or died"); return
+            end
+            if r.Anchored or h.Sit then self:stop("anchored or seated"); return end
+            local stateName=tostring(h:GetState()):match("([^%.]+)$")
+            if stateName~=self.lastState then
+                self:note("STATE "..stateName.." speed="..tostring(h.WalkSpeed)); self.lastState=stateName
+            end
+            if self.mode=="fly" then
+                if h.PlatformStand~=true or h.AutoRotate~=false or stateName=="Climbing" or stateName=="Dead" then
+                    self:stop("game changed flight state"); return
+                end
+                self.flight.update(ctx.velocity(self.flySpeed))
+                return
+            end
+            local now=ctx.now()
+            if now<self.nextSpeed then return end
+            self.nextSpeed=now+.1
+            local current=h.WalkSpeed
+            assert(finite(current),"invalid WalkSpeed")
+            if current~=self.speed then self.restoreSpeed=current end
+            if suspended[stateName] or h.PlatformStand or current==0 then
+                if current==self.speed then h.WalkSpeed=self.restoreSpeed end
+                self.status="Speed paused · "..stateName
+                return
+            end
+            if current~=self.speed then
+                self.resets=self.resets+1
+                if now-self.lastLog>=.5 then
+                    self:note("SPEED_REAPPLY observed="..current.." requested="..self.speed.." state="..stateName.." count="..self.resets)
+                    self.lastLog=now
+                end
+                h.WalkSpeed=self.speed
+            end
+            self.status="Speed 155 · normal movement"
+        end)
+        if not ok then self:stop("runtime error: "..tostring(err)); self:note(self.status) end
+    end
+    function m:export()
+        return "MOVEMENT mode="..self.mode.." reapplications="..self.resets.." | local changes; server acceptance unverified\n"..
+            table.concat(self.events,"\n")
+    end
+    return m
+end
+-- END MOVEMENT CONTROLLER
+
 
 -- BEGIN TESTABLE CORE
 local function newScheduler()
@@ -494,7 +598,7 @@ local auditSeeds = { "86722279259826", "107811934597910", "122307357536158", "99
     "10017994824", "9839904022", "10017151218", "10036138066", "10028752861", "10059485766" }
 local order = { "86722279259826", "107811934597910", "122307357536158", "99787918237880" }
 local config = { radius = 8, cooldown = 0.7, hold = 0.12, offset = 0, guardsOnly = false, heavyTrial = false }
-local state = { version = 6, release = "6.5.1", alive = true, enabled = false, focused = true, connections = {}, animators = {},
+local state = { version = 6, release = "6.6", alive = true, enabled = false, focused = true, connections = {}, animators = {},
     logs = {}, attempts = 0, detected = 0, held = false, releaseAt = 0, testAt = nil }
 env.CloverAutoParry = state
 local scheduler = newScheduler()
@@ -692,6 +796,46 @@ end
 local function root(model)
     return model and (model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart)
 end
+local movement=newMovementControl({
+    now=os.clock,
+    focused=function() return state.alive and state.focused end,
+    rig=function()
+        local char=player.Character
+        return char,char and char:FindFirstChildOfClass("Humanoid"),root(char)
+    end,
+    velocity=function(speed)
+        local camera=workspace.CurrentCamera
+        if not camera or UIS:GetFocusedTextBox() then return Vector3.new(0,0,0) end
+        local function key(k) return UIS:IsKeyDown(k) and 1 or 0 end
+        local direction=camera.CFrame.LookVector*(key(Enum.KeyCode.W)-key(Enum.KeyCode.S))+
+            camera.CFrame.RightVector*(key(Enum.KeyCode.D)-key(Enum.KeyCode.A))+
+            Vector3.new(0,key(Enum.KeyCode.E)-key(Enum.KeyCode.Q),0)
+        if direction.Magnitude>1 then direction=direction.Unit end
+        return direction*speed
+    end,
+    createFlight=function(r)
+        local attachment,velocity
+        local function cleanup()
+            if velocity then pcall(function() velocity:Destroy() end) end
+            if attachment then pcall(function() attachment:Destroy() end) end
+            pcall(function() r.AssemblyLinearVelocity=Vector3.new(0,0,0) end)
+        end
+        local ok,err=pcall(function()
+            attachment=Instance.new("Attachment"); attachment.Name="CloverFlightAttachment"; attachment.Parent=r
+            velocity=Instance.new("LinearVelocity"); velocity.Name="CloverFlightVelocity"
+            velocity.Attachment0=attachment; velocity.RelativeTo=Enum.ActuatorRelativeTo.World
+            velocity.VelocityConstraintMode=Enum.VelocityConstraintMode.Vector
+            velocity.ForceLimitsEnabled=false; velocity.VectorVelocity=Vector3.new(0,0,0); velocity.Parent=r
+        end)
+        if not ok then cleanup(); error(err) end
+        return {destroy=cleanup,update=function(v)
+            assert(velocity.Parent==r and attachment.Parent==r,"flight constraint removed")
+            velocity.VectorVelocity=v
+        end}
+    end,
+})
+state.movement=movement
+
 local function actorFor(animator)
     local object = animator.Parent
     while object and object ~= workspace do
@@ -940,7 +1084,7 @@ function learning:tick(now)
 end
 function learning:export()
     for track,item in pairs(self.active) do self:trace("TRACK_AT_EXPORT",track,item) end
-    local lines={"CLOVER MARKER LEARNING v6.5.1 | place="..game.PlaceId,
+    local lines={"CLOVER MARKER LEARNING v6.6 | place="..game.PlaceId,
         "Accepted names: HitWindow, Attack. Movement and executions remain excluded.",
         "Ready = consistent marker position; NOT confirmed parry success. First encounters are not protected by learning.",
         "lead_seconds="..self.lead.." enabled="..tostring(self.enabled).." skipped_tracks="..self.skipped.." overwritten_diagnostics="..self.overwritten,
@@ -1090,6 +1234,7 @@ local function attach(animator)
     end)
 end
 function state:Unload()
+    movement:stop("unloaded")
     stop("Unloaded")
     -- Keep the panel available for another release attempt if a backend fails.
     if self.held then log("Release failed; press/release F, then retry Unload."); return end
@@ -1112,7 +1257,7 @@ local function make(class, parent, props)
 end
 local gui = make("ScreenGui", playerGui, { Name = "CloverAutoParry", ResetOnSpawn = false, DisplayOrder = 110 })
 state.gui = gui
-local panel = make("Frame", gui, { Size = UDim2.new(0, 390, 0, 340), Position = UDim2.new(0, 24, 0.5, -170),
+local panel = make("Frame", gui, { Size = UDim2.new(0, 390, 0, 410), Position = UDim2.new(0, 24, 0.5, -205),
     BackgroundColor3 = Color3.fromRGB(22, 26, 35), BorderSizePixel = 0 })
 make("UICorner", panel, { CornerRadius = UDim.new(0, 10) })
 local function text(y, h, value)
@@ -1120,7 +1265,7 @@ local function text(y, h, value)
         BackgroundTransparency = 1, Text = value, TextColor3 = Color3.fromRGB(226, 232, 245),
         Font = Enum.Font.Gotham, TextSize = 13, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left })
 end
-local title=text(10,26,"Clover Auto Parry v6.5.1")
+local title=text(10,26,"Clover Auto Parry v6.6")
 title.Active=true
 text(40,36,"NPCs + players · automatic learning and recording\nF7 toggles auto parry; F8 hides this panel.")
 local function button(x,y,w,caption,callback)
@@ -1138,14 +1283,18 @@ button(202,88,174,"Test F (1 second)",function()
     stop("Test scheduled · auto OFF: return focus to the game")
     state.testAt=math.max(os.clock()+1,scheduler.nextAllowed)
 end)
-statusLabel=text(166,38,"OFF · use Test F first")
-local stats=text(205,22,"Detected 0 · attempted 0 · success unverified")
+local flyButton=button(14,168,174,"Fly: OFF",function() movement:setMode("fly") end)
+local speedButton=button(202,168,174,"Speed 155: OFF",function() movement:setMode("speed") end)
+local movementStats=text(204,28,"Movement OFF · Fly: WASD, E up / Q down")
+movementStats.TextSize=11
+statusLabel=text(236,38,"OFF · use Test F first")
+local stats=text(275,22,"Detected 0 · attempted 0 · success unverified")
 stats.TextSize=11
-local learningStats=text(230,22,"Learning and discovery running")
+local learningStats=text(300,22,"Learning and discovery running")
 learningStats.TextSize=11
-local storageStats=text(255,34,storage.status)
+local storageStats=text(325,34,storage.status)
 storageStats.TextSize=11
-text(291,40,"Learned and asset timings are saved and sent separately to Discord. No names, user IDs or raw logs are sent.")
+text(361,40,"Learned and asset timings are saved and sent separately to Discord. No names, user IDs or raw logs are sent.")
 local function copyText(body)
     local clipboard = setclipboard or toclipboard or env.setclipboard or env.toclipboard
     local ok = type(clipboard) == "function" and pcall(clipboard, body)
@@ -1163,7 +1312,7 @@ end
 button(14,128,174,"Copy logs",function()
     copyText("CLOVER AUTO PARRY v"..state.release.." | place="..tostring(game.PlaceId).." | attempts are NOT confirmed successes\n"..
         table.concat(state.logs,"\n").."\n\n"..learning:export().."\n\n"..discovery:export()..
-        "\n\nBACKGROUND AUDIT\n"..table.concat(audit.lines,"\n"))
+        "\n\nBACKGROUND AUDIT\n"..table.concat(audit.lines,"\n").."\n\n"..movement:export())
 end)
 button(202,128,174,"Unload",function() state:Unload() end)
 local function startAudit()
@@ -1217,9 +1366,9 @@ connect(UIS.InputBegan, function(input, processed)
     elseif input.KeyCode == Enum.KeyCode.F7 then switch()
     elseif input.KeyCode == Enum.KeyCode.F8 then panel.Visible = not panel.Visible end
 end)
-connect(UIS.WindowFocusReleased, function() state.focused = false; stop("OFF · game lost focus") end)
+connect(UIS.WindowFocusReleased, function() state.focused = false; movement:stop("focus lost"); stop("OFF · game lost focus") end)
 connect(UIS.WindowFocused, function() state.focused = true end)
-connect(player.CharacterRemoving, function() stop("OFF · character removed") end)
+connect(player.CharacterRemoving, function() movement:stop("character removed"); stop("OFF · character removed") end)
 connect(workspace.DescendantAdded, attach)
 connect(workspace.DescendantRemoving, function(object)
     local c = state.animators[object]
@@ -1227,6 +1376,10 @@ connect(workspace.DescendantRemoving, function(object)
 end)
 for _, object in ipairs(workspace:GetDescendants()) do attach(object) end
 connect(RunService.Heartbeat, function()
+    movement:tick()
+    flyButton.Text=movement.mode=="fly" and "Fly: ON" or "Fly: OFF"
+    speedButton.Text=movement.mode=="speed" and "Speed 155: ON" or "Speed 155: OFF"
+    movementStats.Text=movement.status
     local now = os.clock()
     local ok, err = pcall(function()
         if now>=audit.nextRun and not audit.running then startAudit() end
