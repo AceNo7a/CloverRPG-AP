@@ -1,4 +1,4 @@
--- Clover auto parry v6.8: evidence-based wolf range and action-lock handling; retained flight diagnostics.
+-- Clover auto parry v6.9: Bite Pounce range edge, F-input observations and last-valid flight snapshots.
 -- Run this entire file. Starts OFF. No remote hooks or packet replay.
 -- Automatic reporting sends numeric timing candidates only; no remote code is fetched.
 -- Manual F timings are starting estimates, not measured server parry windows.
@@ -20,6 +20,11 @@ local function newOutcomeDiagnostics(ctx)
     end
     function d:life(kind,detail,owner)
         self:note("lifecycle",kind.." "..(detail or "").." "..self:snapshot(nil,owner))
+        if self.lastFlightLive and ctx.now()-self.lastFlightLive.time<=15 and
+            (kind:find("REMOV",1,true) or kind:find("DESTROY",1,true) or kind=="MOVEMENT_STOP") then
+            self:note("lifecycle",string.format("LAST_VALID_FLIGHT before=%s age_ms=%.2f %s",kind,
+                (ctx.now()-self.lastFlightLive.time)*1000,self.lastFlightLive.snapshot))
+        end
     end
     function d:movement(kind,detail,owner)
         if kind=="START" and owner.mode=="fly" then
@@ -27,13 +32,13 @@ local function newOutcomeDiagnostics(ctx)
                 self.flightHistory[#self.flightHistory+1]="PRIOR FLIGHT TRACE overwritten="..self.dropped.flight.."\n"..table.concat(self.flight,"\n")
                 if #self.flightHistory>2 then table.remove(self.flightHistory,1) end
             end
-            self.flight={}; self.dropped.flight=0; self.nextFlight=0; self.maxFrame=0
+            self.flight={}; self.dropped.flight=0; self.nextFlight=0; self.maxFrame=0; self.lastFlightLive=nil
         end
         self:life("MOVEMENT_"..kind,detail,owner)
     end
     function d:attempt(item,backend)
         self.serial=self.serial+1
-        local row={token=self.serial,item=item,down=ctx.now(),phase=1}
+        local row={token=self.serial,item=item,down=ctx.now(),phase=1,uisDown=0,uisUp=0,processedDown=0,reaction=false}
         self.rows[#self.rows+1]=row
         if #self.rows>32 then table.remove(self.rows,1) end
         self:note("parry","INPUT_DOWN attempt="..row.token.." attack="..tostring(item.id).." backend="..backend)
@@ -51,18 +56,40 @@ local function newOutcomeDiagnostics(ctx)
         self:note("parry",string.format("INPUT_UP attempt=%d api_ok=%s elapsed_ms=%.2f reason=%s %s",
             row.token,tostring(ok),(ctx.now()-row.down)*1000,tostring(reason),self:snapshot(row.item)))
     end
+    function d:keyObserved(direction,processed)
+        local row=self.rows[#self.rows];local now=ctx.now()
+        if row and now-row.down>=0 and now-row.down<=1.25 then
+            if direction=="down" then row.uisDown=row.uisDown+1;if processed then row.processedDown=row.processedDown+1 end
+            else row.uisUp=row.uisUp+1 end
+            self:note("parry",string.format("UIS_F_%s attempt=%d after_down_ms=%.2f processed=%s association=temporal_only %s",
+                direction:upper(),row.token,(now-row.down)*1000,tostring(processed),self:snapshot(row.item)))
+        else self:note("parry","UIS_F_"..direction:upper().." recent_attempt=none processed="..tostring(processed).." "..self:snapshot()) end
+    end
     function d:correlate(kind,detail)
         local now=ctx.now(); local found=0
         for i=#self.rows,1,-1 do
             local row=self.rows[i]; local age=now-row.down
             if age>=0 and age<=1.25 and found<4 then
                 found=found+1
+                if kind=="SELF_ANIMATION" and (detail:find("path=Misc/Parry",1,true) or detail:find("path=Parrys/",1,true)
+                    or detail:find("path=Blocks/",1,true)) then row.reaction=true end
                 local up=row.up and string.format("%.2f",(now-row.up)*1000) or "not_released"
                 self:note("parry",string.format("%s attempt=%d after_down_ms=%.2f after_up_ms=%s %s association=temporal_only %s",
                     kind,row.token,age*1000,up,detail,self:snapshot(row.item)))
             end
         end
-        if found==0 then self:note("parry",kind.." recent_attempt=none "..detail.." "..self:snapshot()) end
+        if found==0 then
+            self:note("parry",kind.." recent_attempt=none "..detail.." "..self:snapshot())
+            if kind=="DAMAGE" then
+                for i=#self.rows,1,-1 do
+                    local row=self.rows[i];local age=now-row.down
+                    if age>1.25 and age<=4 and row.sent and not row.reaction then
+                        self:note("parry",string.format("LATE_DAMAGE_CANDIDATE attempt=%d age_ms=%.2f %s association=temporal_only_not_assigned",
+                            row.token,age*1000,detail));break
+                    end
+                end
+            end
+        end
     end
     function d:tick(mode,owner)
         local now=ctx.now()
@@ -70,11 +97,23 @@ local function newOutcomeDiagnostics(ctx)
         self.lastTick=now
         if mode=="fly" and now>=self.nextFlight then
             self.nextFlight=now+.25
-            self:note("flight",string.format("FLIGHT_SAMPLE max_heartbeat_gap_ms=%.2f %s",self.maxFrame*1000,self:snapshot(nil,owner)))
+            local snapshot=self:snapshot(nil,owner)
+            if ctx.flightValid then
+                local ok,valid=pcall(ctx.flightValid,owner)
+                if ok and valid then self.lastFlightLive={time=now,snapshot=snapshot} end
+            end
+            self:note("flight",string.format("FLIGHT_SAMPLE max_heartbeat_gap_ms=%.2f %s",self.maxFrame*1000,snapshot))
             self.maxFrame=0
         end
         local phases={.05,.15,.30,.60}
         for _,row in ipairs(self.rows) do
+            if not row.summarized and now-row.down>=1.25 then
+                row.summarized=true
+                local result=not row.sent and "input_api_failed" or (row.reaction and "local_reaction_seen" or
+                    (row.uisDown==0 and "no_uis_down_or_reaction_observed" or (row.processedDown>0 and "uis_processed_without_reaction" or "uis_down_without_reaction")))
+                self:note("parry",string.format("INPUT_OBSERVATION_SUMMARY attempt=%d api_ok=%s uis_down=%d uis_up=%d processed_down=%d reaction=%s result=%s authoritative_success=unknown",
+                    row.token,tostring(row.sent),row.uisDown,row.uisUp,row.processedDown,tostring(row.reaction),result))
+            end
             local due=phases[row.phase]
             if due and now-row.down>=due then
                 self:note("parry",string.format("POST_INPUT attempt=%d requested_age_ms=%.0f actual_age_ms=%.2f %s",
@@ -723,7 +762,7 @@ local auditSeeds = { "86722279259826", "107811934597910", "122307357536158", "99
     "10017994824", "9839904022", "10017151218", "10036138066", "10028752861", "10059485766" }
 local order = { "86722279259826", "107811934597910", "122307357536158", "99787918237880" }
 local config = { radius = 8, cooldown = 0.7, hold = 0.12, offset = 0, guardsOnly = false, heavyTrial = false }
-local state = { version = 6, release = "6.8", alive = true, enabled = false, focused = true, connections = {}, animators = {},
+local state = { version = 6, release = "6.9", alive = true, enabled = false, focused = true, connections = {}, animators = {},
     logs = {}, attempts = 0, detected = 0, held = false, releaseAt = 0, testAt = nil }
 env.CloverAutoParry = state
 local scheduler = newScheduler()
@@ -999,7 +1038,9 @@ local function distance(actor)
 end
 local wolfIds={['125957249913572']=true,['73629219095110']=true,['124572427631698']=true,['73807165586659']=true}
 local function attackRange(item)
-    if wolfIds[item.id] and item.actor and item.actor.Name=="Wolf" and not Players:GetPlayerFromCharacter(item.actor) then return 16 end
+    if wolfIds[item.id] and item.actor and item.actor.Name=="Wolf" and not Players:GetPlayerFromCharacter(item.actor) then
+        return item.id=="124572427631698" and 18 or 16
+    end
     return config.radius
 end
 local function diagnosticSnapshot(item,owner)
@@ -1028,6 +1069,17 @@ local function diagnosticSnapshot(item,owner)
     field("requested_velocity",function() return vec(r:FindFirstChild("CloverFlightVelocity").VectorVelocity) end)
     field("focused",function() return state.focused end)
     field("typing",function() return UIS:GetFocusedTextBox()~=nil end)
+    field("focused_box",function() local box=UIS:GetFocusedTextBox();return box and box.Name or "none" end)
+    field("uis_f_down",function() return UIS:IsKeyDown(Enum.KeyCode.F) end)
+    field("executor_active",function()
+        local fn=isrbxactive or isgameactive or env.isrbxactive or env.isgameactive
+        if type(fn)=="function" then return fn() end
+        return "unavailable"
+    end)
+    field("menu_open",function() return game:GetService("GuiService").MenuIsOpen end)
+    field("chat_focused",function()
+        return game:GetService("TextChatService"):FindFirstChildOfClass("ChatInputBarConfiguration").IsFocused
+    end)
     field("f_held_by_script",function() return state.held end)
     field("scheduled_release_in_ms",function() return state.held and string.format("%.2f",(state.releaseAt-os.clock())*1000) or "not_held" end)
     field("network_ping_ms",function() return string.format("%.1f",player:GetNetworkPing()*1000) end)
@@ -1060,7 +1112,27 @@ local function diagnosticSnapshot(item,owner)
         end
         return table.concat(list,",")
     end)
+    if owner and owner.mode=="fly" then
+        field("floor_material",function() return h.FloorMaterial end)
+        field("ground_below",function()
+            local params=RaycastParams.new();params.FilterType=Enum.RaycastFilterType.Exclude;params.FilterDescendantsInstances={char}
+            local hit=workspace:Raycast(r.Position,Vector3.new(0,-1024,0),params)
+            return hit and string.format("distance:%.2f material:%s",hit.Distance,tostring(hit.Material)) or "none_within_1024"
+        end)
+    end
     if item then
+        field("f_bindings",function()
+            local all=game:GetService("ContextActionService"):GetAllBoundActionInfo();local names={};local scanned=0
+            for name,info in pairs(all) do
+                scanned=scanned+1;if scanned>256 then break end
+                for i,key in ipairs(info.inputTypes or {}) do
+                    if i>16 then break end
+                    if key==Enum.KeyCode.F then names[#names+1]=clean(name)..":"..tostring(info.priorityLevel);break end
+                end
+            end
+            table.sort(names);while #names>8 do table.remove(names) end
+            return #names>0 and table.concat(names,",") or "none_observed"
+        end)
         field("attack",function() return item.id end)
         field("source",function() return item.source or "preset/test" end)
         field("target_pos",function() return item.target end)
@@ -1080,7 +1152,10 @@ local function diagnosticSnapshot(item,owner)
     end
     return table.concat(fields," ")
 end
-diagnostics=newOutcomeDiagnostics({now=os.clock,snapshot=diagnosticSnapshot})
+diagnostics=newOutcomeDiagnostics({now=os.clock,snapshot=diagnosticSnapshot,flightValid=function(owner)
+    return owner and owner.character==player.Character and owner.humanoid and owner.humanoid.Health>0 and owner.root
+        and owner.character:IsDescendantOf(workspace) and owner.humanoid:IsDescendantOf(owner.character) and owner.root:IsDescendantOf(owner.character)
+end})
 state.diagnostics=diagnostics
 diagnosticCall=function(method,...)
     local ok,value=pcall(diagnostics[method],diagnostics,...)
@@ -1106,6 +1181,7 @@ local function bindDiagnosticCharacter()
     end
     local captured={character=char,humanoid=h,root=r}
     if h then
+        watch(h.Destroying,function() diagnosticCall("life","HUMANOID_DESTROYING","",captured) end)
         watch(h.Died,function() diagnosticCall("life","HUMANOID_DIED","",captured) end)
         local previousHealth=h.Health
         watch(h.HealthChanged,function(value)
@@ -1123,10 +1199,17 @@ local function bindDiagnosticCharacter()
             end
         end)
     end
-    if char then watch(char.AncestryChanged,function(_,parent)
-        diagnosticCall("life","CHARACTER_ANCESTRY","parent_present="..tostring(parent~=nil),captured)
-    end) end
+    if char then
+        watch(char.Destroying,function() diagnosticCall("life","CHARACTER_DESTROYING","",captured) end)
+        watch(char.AncestryChanged,function(_,parent)
+            diagnosticCall("life","CHARACTER_ANCESTRY","parent_present="..tostring(parent~=nil),captured)
+        end)
+        watch(char.ChildRemoved,function(child)
+            if child==h or child==r then diagnosticCall("life","CHARACTER_CHILD_REMOVED","kind="..(child==h and "humanoid" or "root"),captured) end
+        end)
+    end
     if r then
+        watch(r.Destroying,function() diagnosticCall("life","ROOT_DESTROYING","",captured) end)
         watch(r.AncestryChanged,function(_,parent)
             diagnosticCall("life","ROOT_ANCESTRY","parent_present="..tostring(parent~=nil),captured)
         end)
@@ -1368,7 +1451,7 @@ function learning:tick(now)
 end
 function learning:export()
     for track,item in pairs(self.active) do self:trace("TRACK_AT_EXPORT",track,item) end
-    local lines={"CLOVER MARKER LEARNING v6.8 | place="..game.PlaceId,
+    local lines={"CLOVER MARKER LEARNING v6.9 | place="..game.PlaceId,
         "Accepted names: HitWindow, Attack. Movement and executions remain excluded.",
         "Ready = consistent marker position; NOT confirmed parry success. First encounters are not protected by learning.",
         "lead_seconds="..self.lead.." enabled="..tostring(self.enabled).." skipped_tracks="..self.skipped.." overwritten_diagnostics="..self.overwritten,
@@ -1562,7 +1645,7 @@ local function text(y, h, value)
         BackgroundTransparency = 1, Text = value, TextColor3 = Color3.fromRGB(226, 232, 245),
         Font = Enum.Font.Gotham, TextSize = 13, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left })
 end
-local title=text(10,26,"Clover Auto Parry v6.8")
+local title=text(10,26,"Clover Auto Parry v6.9")
 title.Active=true
 text(40,36,"NPCs + players · automatic learning and recording\nF7 toggles auto parry; F8 hides this panel.")
 local function button(x,y,w,caption,callback)
@@ -1651,11 +1734,13 @@ connect(UIS.InputChanged, function(input)
         panel.Position = UDim2.new(panelStart.X.Scale, panelStart.X.Offset + d.X, panelStart.Y.Scale, panelStart.Y.Offset + d.Y)
     end
 end)
-connect(UIS.InputEnded, function(input)
+connect(UIS.InputEnded, function(input,processed)
+    if input.KeyCode==Enum.KeyCode.F then diagnosticCall("keyObserved","up",processed==true) end
     if input.UserInputType == Enum.UserInputType.MouseButton1 then dragStart = nil end
     if input.KeyCode == Enum.KeyCode.F and not state.held then discovery:mark("OBSERVED_F_UP") end
 end)
 connect(UIS.InputBegan, function(input, processed)
+    if input.KeyCode==Enum.KeyCode.F then diagnosticCall("keyObserved","down",processed==true) end
     if processed or UIS:GetFocusedTextBox() then return end
     if input.KeyCode == Enum.KeyCode.F and not state.held then
         discovery:mark("OBSERVED_F_DOWN")
@@ -1672,6 +1757,10 @@ end)
 if player.CharacterAdded then connect(player.CharacterAdded,function() diagnosticCall("life","CHARACTER_ADDED","") end) end
 connect(workspace.DescendantAdded, attach)
 connect(workspace.DescendantRemoving, function(object)
+    if object==diagnostics.character or object==diagnostics.humanoid or object==diagnostics.root then
+        diagnosticCall("life","WORLD_DESCENDANT_REMOVING","kind="..tostring(object.ClassName),
+            {character=diagnostics.character,humanoid=diagnostics.humanoid,root=diagnostics.root})
+    end
     local c = state.animators[object]
     if c then c:Disconnect(); state.animators[object] = nil end
 end)

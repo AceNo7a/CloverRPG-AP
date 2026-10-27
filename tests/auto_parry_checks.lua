@@ -54,7 +54,7 @@ end
 local nodes = {}
 local function object(class, name, parent)
     local o = { ClassName = class, Name = name or class, Parent = parent, Visible = true }
-    for _, key in ipairs({ "Activated", "InputBegan", "InputEnded", "InputChanged", "FocusLost", "AnimationPlayed", "HealthChanged", "Died", "StateChanged", "AncestryChanged", "ChildRemoved" }) do o[key] = signal() end
+    for _, key in ipairs({ "Activated", "InputBegan", "InputEnded", "InputChanged", "FocusLost", "AnimationPlayed", "HealthChanged", "Died", "StateChanged", "AncestryChanged", "ChildRemoved", "Destroying" }) do o[key] = signal() end
     function o:IsA(c) return self.ClassName == c end
     function o:GetAttribute(key) return self.Attributes and self.Attributes[key] end
     function o:GetAttributes() return self.Attributes or {} end
@@ -152,11 +152,17 @@ click("Test F"); beat(.9); check(downs==0,"test input waits one second")
 beat(1); check(downs==1 and ui.held,"test sends one F")
 beat(1.13); check(not ui.held and ups==1,"test releases F")
 check(ui.diagnostics:export():find("INPUT_UP",1,true),"real input callbacks record release diagnostics")
+local beforeProcessed=downs
+input.InputBegan:Fire({KeyCode="F"},true);input.InputEnded:Fire({KeyCode="F"},true)
+check(downs==beforeProcessed and ui.diagnostics:export():find("UIS_F_DOWN",1,true),"processed F events remain observable without generating another press")
+
 local localHuman=own:FindFirstChildOfClass("Humanoid")
 localHuman.Health=85; localHuman.HealthChanged:Fire(85)
 check(ui.diagnostics:export():find("source=HealthChanged",1,true),"health signal records damage correlation")
 localHuman.Died:Fire()
 check(ui.diagnostics:export():find("HUMANOID_DIED",1,true),"death signal produces independent lifecycle record")
+localHuman.Destroying:Fire()
+check(ui.diagnostics:export():find("HUMANOID_DESTROYING",1,true),"destruction signal is recorded separately from death")
 ownAnimator.AnimationPlayed:Fire(animation("123456"))
 check(ui.diagnostics:export():find("SELF_ANIMATION",1,true),"own animation callbacks reach outcome diagnostics")
 
@@ -182,7 +188,7 @@ tr=swing(6,"59998",otherAnimator)
 check(#ui.discovery.order==before+2,"recording continues with auto OFF")
 click("Copy logs")
 check(clipboard:find("CLOVER AUTO PARRY v6",1,true) and clipboard:find("CLOVER DISCOVERY v6",1,true)
- and clipboard:find("CLOVER MARKER LEARNING v6.8",1,true) and clipboard:find("BACKGROUND AUDIT",1,true) and clipboard:find("OUTCOME DIAGNOSTICS",1,true),"one export includes attempts, learning, discovery and audit")
+ and clipboard:find("CLOVER MARKER LEARNING v6.9",1,true) and clipboard:find("BACKGROUND AUDIT",1,true) and clipboard:find("OUTCOME DIAGNOSTICS",1,true),"one export includes attempts, learning, discovery and audit")
 setclipboard=nil; click("Copy logs")
 check(ui.export and ui.export.Text,"clipboard fallback remains available")
 ui.export.FocusLost:Fire(); setclipboard=function(v) clipboard=v end
@@ -381,6 +387,13 @@ check(downs==baseAttack+2,"captured 14.97-stud NPC wolf attack is covered")
 wolf:FindFirstChild('HumanoidRootPart').Position=position(16.1)
 tr=swing(607,'73807165586659',wa); tr.Speed=1.1; tr.TimePosition=.88; beat(607.8)
 check(downs==baseAttack+2 and ui.status:find('range=16.00',1,true),"wolf allowance remains bounded at sixteen studs")
+wolf:FindFirstChild('HumanoidRootPart').Position=position(17.12)
+tr=swing(609,'124572427631698',wa);tr.TimePosition=.85;beat(609.85)
+check(downs==baseAttack+3,"Bite Pounce covers captured 17.12-stud opportunity")
+beat(610)
+wolf:FindFirstChild('HumanoidRootPart').Position=position(18.1)
+tr=swing(611,'124572427631698',wa);tr.TimePosition=.85;beat(611.85)
+check(downs==baseAttack+3 and ui.status:find('range=18.00',1,true),"Bite Pounce remains bounded at eighteen studs")
 learner.assets['60002']={status='ready',position=.4}; learner.assets['60003']={status='ready',position=.4}
 check(not learner:position('60002') and not learner:position('60003'),"asset metadata never bypasses execution or movement filters")
 learner:sample('124572427631698',.96,false)

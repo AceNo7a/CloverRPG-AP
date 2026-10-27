@@ -8,6 +8,18 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/AceNo7a/CloverRPG-AP/
 
 The GUI has six controls: **Auto parry**, **Test F**, **Copy logs**, **Unload**, **Fly**, and **Speed 155**. F7 toggles auto parry; F8 hides the panel. There are no target, distance, delay, learning or audit settings. All nearby NPCs and players are eligible targets. Losing focus or respawning turns automatic input OFF while background features continue. Unload stops the script and its background work.
 
+## Bite Pounce and unanswered-input checks (v6.9)
+
+NPC Wolf Bite Pounce124572427631698 now has an18-stud attempt range, covering the captured17.12-stud skip. The other three known wolf moves stay16; players and other moves stay8. Lead/hold/speeds remain unchanged. This is bounded encounter coverage, not a measured universal hitbox.
+
+F input diagnostics now observe UserInputService InputBegan/InputEnded before the normal processed/typing filter, recording gameProcessedEvent and association with the latest recent attempt. They do not intercept input. Snapshots add actual UIS F-key state, executor focus when available, focused textbox name (never its contents), menu/chat focus and up to8 F-bound ContextActionService action names/priorities. Unsupported properties are reported as unavailable. Input API success, UIS delivery and local parry/block reaction are separate observations; lack of a UIS event alone does not prove the executor failed.
+
+At1.25seconds, each attempt gets INPUT_OBSERVATION_SUMMARY explaining which observations were seen. Damage1.25–4seconds after an unanswered attempt may produce LATE_DAMAGE_CANDIDATE, explicitly unassigned temporal evidence. No automatic retry, extra F press or timing adjustment is triggered by these diagnostics.
+
+Flight records now include character/humanoid/root Destroying and workspace-removal ordering, floor material and downward ground distance when available. The last valid live-character flight snapshot is retained before removal (with its age), even when the later character-removal event can no longer read the objects. The latest plus two prior flight traces remain bounded. This does not identify a private server reset rule or bypass it.
+
+Verification:112 integration,27 outcome-diagnostic,29 movement and11 action-lock assertions. Test Bite Pounce with movement OFF; after any silent press or flight reset, Copy logs before reloading. Wait at least1.5seconds after the last ordinary parry test so its summary is included; keep recording through any later damage.
+
 ## Capture-based fixes (v6.8)
 
 The v6.7 capture showed five known NPC-wolf attacks skipped at13.66–14.97studs followed by damage123–140ms later. The four previously identified NPC Wolf attacks now use a bounded16-stud attempt range; players and all other moves remain8. This is a capture-based allowance, not a measured universal hitbox. Lead120ms and hold120ms remain unchanged.
