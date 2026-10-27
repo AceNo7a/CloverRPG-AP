@@ -9,6 +9,8 @@ let outbound, calls=0;
 globalThis.fetch=async(url,options)=>{calls++; outbound=JSON.parse(options.body); return new Response('{}',{status:200});};
 const req=(data=body)=>new Request('https://relay.example/report',{method:'POST',body:JSON.stringify(data)});
 check(validate(body).profiles.length===1,'accept candidate schema');
+check(validate({...body,version:6}).version===6,'accept v6 automatic reporter');
+check(!validate({...body,version:7}),'reject unsupported client schema version');
 check(!validate({...body,place:1}),'reject wrong place');
 check(!validate({...body,profiles:[{...body.profiles[0],marker:NaN}]}),'reject non-finite marker');
 check(!validate({...body,profiles:[{...body.profiles[0],spread:.1}]}),'reject inconsistent profile');

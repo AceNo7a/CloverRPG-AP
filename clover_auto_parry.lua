@@ -1,6 +1,6 @@
--- Clover auto parry v5: experimental HitWindow learning for later encounters.
+-- Clover auto parry v6: experimental HitWindow learning for later encounters.
 -- Run this entire file. Starts OFF. No remote hooks or packet replay.
--- Optional reporting sends numeric timing candidates only; no remote code is fetched.
+-- Automatic reporting sends numeric timing candidates only; no remote code is fetched.
 -- Manual F timings are starting estimates, not measured server parry windows.
 -- Learned positions take priority. Bundled candidates remain unverified for parry success.
 
@@ -177,7 +177,7 @@ local function newProfileSupport(options)
                 end
             end
         end
-        return {schema=1,version=5,place=options.place,placeVersion=options.placeVersion,
+        return {schema=1,version=6,place=options.place,placeVersion=options.placeVersion,
             evidence="consistent HitWindow; parry success unverified",profiles=out},keys
     end
     function p:tick(now, rows, allowed)
@@ -242,7 +242,7 @@ local function runTimingAudit(options)
         end
         return table.concat(parts, ".")
     end
-    emit("CLOVER TIMING AUDIT v5 | metadata clues, NOT verified combat timings")
+    emit("CLOVER TIMING AUDIT v6 | metadata clues, NOT verified combat timings")
     emit("Module paths are names only; module code was not executed or inspected. Attribute units/semantics are unknown.")
     for _, id in ipairs(options.ids or {}) do asset(id) end
     local queue = {}; for _, root in ipairs(options.roots or {}) do queue[#queue + 1] = root end
@@ -343,7 +343,7 @@ local bundledProfiles = {
     ["99787918237880"] = .3874998391,
 }
 -- No webhook token belongs in this distributed file.
-local PUBLIC_REPORT_URL = "" -- Optional HTTPS relay; never a secret/token.
+local PUBLIC_REPORT_URL = "https://clover-timing-relay.indigoamber16384.chatgpt.site/report"
 
 if env.CloverAutoParry then
     env.CloverAutoParry:Unload()
@@ -377,16 +377,16 @@ local auditSeeds = { "86722279259826", "107811934597910", "122307357536158", "99
     "10017994824", "9839904022", "10017151218", "10036138066", "10028752861", "10059485766" }
 local order = { "86722279259826", "107811934597910", "122307357536158", "99787918237880" }
 local config = { radius = 8, cooldown = 0.7, hold = 0.12, offset = 0, guardsOnly = false, heavyTrial = false }
-local state = { version = 5, alive = true, enabled = false, focused = true, connections = {}, animators = {},
+local state = { version = 6, alive = true, enabled = false, focused = true, connections = {}, animators = {},
     logs = {}, attempts = 0, detected = 0, held = false, releaseAt = 0, testAt = nil }
 env.CloverAutoParry = state
 local scheduler = newScheduler()
-local discovery = { enabled = false, radius = 20, includeLoops = false, events = {},
+local discovery = { enabled = true, radius = 40, includeLoops = false, events = {},
     catalog = {}, order = {}, active = {}, activeCount = 0, serial = 0, dropped = 0,
     catalogSkipped = 0, tracksSkipped = 0, recent = {}, actorSerial = 0,
     actorIds = setmetatable({}, { __mode = "k" }) }
 state.discovery = discovery
-local audit = { running = false, generation = 0, lines = {}, markerNames = {} }
+local audit = { running = false, generation = 0, lines = {}, markerNames = {}, nextRun = os.clock()+2 }
 state.audit = audit
 local sessionKey = tostring(game.PlaceId) .. ":" .. tostring(game.JobId) .. ":" .. tostring(game.PlaceVersion)
 if not env.__CloverHitWindowV4 or env.__CloverHitWindowV4.session ~= sessionKey then
@@ -403,7 +403,7 @@ local write=writefile or env.writefile
 local requestFn=request or http_request or env.request or env.http_request or (syn and syn.request)
 local reportUrl=type(options.reportUrl)=="string" and options.reportUrl or PUBLIC_REPORT_URL
 local privateEnabled=false
-if http and type(read)=="function" then
+if reportUrl=="" and http and type(read)=="function" then
     local ok,data=pcall(function()
         local raw=read("clover_private_reporting.json"); assert(#raw<4096)
         return http:JSONDecode(raw)
@@ -439,8 +439,8 @@ local storage=newProfileSupport({place=game.PlaceId,placeVersion=game.PlaceVersi
         end
         return code,retry
     end or nil})
-storage.enabled=privateEnabled and storage.available
-storage.status=storage.enabled and "Private timing reporting ON" or "Reporting OFF"
+storage.enabled=storage.available
+storage.status=storage.enabled and "Automatic timing reporting ON" or "Reporting unavailable"
 storage:load(learning.model.rows)
 state.storage=storage
 
@@ -484,7 +484,7 @@ function discovery:mark(kind)
     end
 end
 function discovery:export()
-    local lines = { "CLOVER DISCOVERY v5 | place=" .. tostring(game.PlaceId),
+    local lines = { "CLOVER DISCOVERY v6 | place=" .. tostring(game.PlaceId),
         "Unknown means unmapped animation, NOT confirmed attack. Known means ID in prototype; timing not universally validated.",
         "Health/F/marker correlations are NOT authoritative hit or parry-success events.",
         string.format("radius=%s loops=%s recording=%s overwritten_events=%d skipped_catalog_observations=%d skipped_track_observers=%d",
@@ -584,9 +584,6 @@ local function eligible(actor)
     if not actor or actor == player.Character or not actor:IsDescendantOf(workspace) then return false end
     local humanoid = actor:FindFirstChildOfClass("Humanoid")
     if humanoid and humanoid.Health <= 0 then return false end
-    if config.guardsOnly then
-        return not Players:GetPlayerFromCharacter(actor) and string.find(actor.Name, "Kamo Guard", 1, true) ~= nil
-    end
     return true
 end
 local function distance(actor)
@@ -724,7 +721,7 @@ function learning:tick(now)
     for _,track in ipairs(remove) do self:disconnect(track) end
 end
 function learning:export()
-    local lines={"CLOVER HITWINDOW LEARNING v5 | place="..game.PlaceId,
+    local lines={"CLOVER HITWINDOW LEARNING v6 | place="..game.PlaceId,
         "Ready = consistent marker position; NOT confirmed parry success. First encounters are not protected by learning.",
         "lead_seconds="..self.lead.." enabled="..tostring(self.enabled).." skipped_tracks="..self.skipped,
         self.registryStatus or "Registry not checked",storage.diskStatus.." | "..storage.status}
@@ -885,7 +882,7 @@ local function make(class, parent, props)
 end
 local gui = make("ScreenGui", playerGui, { Name = "CloverAutoParry", ResetOnSpawn = false, DisplayOrder = 110 })
 state.gui = gui
-local panel = make("Frame", gui, { Size = UDim2.new(0, 390, 0, 490), Position = UDim2.new(0, 24, 0.5, -245),
+local panel = make("Frame", gui, { Size = UDim2.new(0, 390, 0, 340), Position = UDim2.new(0, 24, 0.5, -170),
     BackgroundColor3 = Color3.fromRGB(22, 26, 35), BorderSizePixel = 0 })
 make("UICorner", panel, { CornerRadius = UDim.new(0, 10) })
 local function text(y, h, value)
@@ -893,73 +890,39 @@ local function text(y, h, value)
         BackgroundTransparency = 1, Text = value, TextColor3 = Color3.fromRGB(226, 232, 245),
         Font = Enum.Font.Gotham, TextSize = 13, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left })
 end
-local title = text(10, 26, "Clover Auto Parry v5 · learning")
-title.Active = true
-text(39, 34, "Guard presets + learned HitWindow timings. Auto starts OFF. F7 toggles; F8 hides.")
-local function button(x, y, w, caption, callback, parent)
-    local b = make("TextButton", parent or panel, { Position = UDim2.new(0, x, 0, y), Size = UDim2.new(0, w, 0, 30),
-        Text = caption, BackgroundColor3 = Color3.fromRGB(52, 65, 89), TextColor3 = Color3.new(1, 1, 1),
-        Font = Enum.Font.Gotham, TextSize = 13, BorderSizePixel = 0 })
-    make("UICorner", b, { CornerRadius = UDim.new(0, 6) })
-    connect(b.Activated, callback)
-    return b
+local title=text(10,26,"Clover Auto Parry v6")
+title.Active=true
+text(40,36,"NPCs + players · automatic learning and recording\nF7 toggles auto parry; F8 hides this panel.")
+local function button(x,y,w,caption,callback)
+    local b=make("TextButton",panel,{Position=UDim2.new(0,x,0,y),Size=UDim2.new(0,w,0,32),Text=caption,
+        BackgroundColor3=Color3.fromRGB(52,65,89),TextColor3=Color3.new(1,1,1),Font=Enum.Font.Gotham,TextSize=13,BorderSizePixel=0})
+    make("UICorner",b,{CornerRadius=UDim.new(0,6)}); connect(b.Activated,callback); return b
 end
 local toggle
 local function switch()
     if state.enabled then stop("OFF")
-    elseif not state.held then
-        state.enabled = true; scheduler:clear(); log("ON · waiting for mapped attacks")
-    end
+    elseif not state.held then state.enabled=true; scheduler:clear(); log("ON · waiting for mapped attacks") end
 end
-toggle = button(14, 82, 174, "Auto parry: OFF", switch)
-button(202, 82, 174, "Test F (1 second)", function()
+toggle=button(14,88,174,"Auto parry: OFF",switch)
+button(202,88,174,"Test F (1 second)",function()
     stop("Test scheduled: return focus to the game")
-    state.testAt = math.max(os.clock() + 1, scheduler.nextAllowed)
+    state.testAt=math.max(os.clock()+1,scheduler.nextAllowed)
 end)
-local modeButton
-modeButton = button(14, 120, 362, "Targets: nearby NPCs + players", function()
-    stop("Target mode changed")
-    config.guardsOnly = not config.guardsOnly
-    modeButton.Text = config.guardsOnly and "Targets: Kamo Guards" or "Targets: nearby NPCs + players"
-end)
-local methodButton
-methodButton = button(14, 158, 362, "Input: " .. (methods[1] and methods[1].name or "unavailable"), function()
-    stop("Input method changed; test F before enabling")
-    if not state.held and #methods > 0 then methodIndex = methodIndex % #methods + 1 end
-    methodButton.Text = "Input: " .. (methods[methodIndex] and methods[methodIndex].name or "unavailable")
-end)
-local function field(y, caption, value, minimum, maximum, setter, parent)
-    local label = text(y, 26, caption); label.Parent = parent or panel
-    label.Size = UDim2.new(0, 260, 0, 26)
-    local box = make("TextBox", parent or panel, { Position = UDim2.new(0, 282, 0, y), Size = UDim2.new(0, 94, 0, 26),
-        Text = tostring(value), ClearTextOnFocus = false, BackgroundColor3 = Color3.fromRGB(36, 44, 58),
-        TextColor3 = Color3.new(1, 1, 1), Font = Enum.Font.Code, TextSize = 14, BorderSizePixel = 0 })
-    connect(box.FocusLost, function()
-        local number = tonumber(box.Text)
-        if number and number == number and number >= minimum and number <= maximum then
-            setter(number); value = number; scheduler:clear()
-            log(caption .. " = " .. tostring(number))
-        else log("Expected " .. minimum .. " to " .. maximum .. " for " .. caption) end
-        box.Text = tostring(value)
-    end)
-end
-field(198, "Range (studs)", 8, 1, 25, function(v) config.radius = v end)
-field(229, "Attempt cooldown (seconds)", 0.7, 0.7, 3, function(v) config.cooldown = v end)
-field(260, "F hold (seconds)", 0.12, 0.03, 0.3, function(v) config.hold = v end)
-field(291, "Timing offset (ms; minus = earlier)", 0, -200, 200, function(v) config.offset = v / 1000 end)
-for i, id in ipairs(order) do
-    local attack = attacks[id]
-    field(322 + (i - 1) * 28, attack.name .. " delay (seconds)", attack.delay, 0.02, 0.6, function(v) attack.delay = v end)
-end
-statusLabel = text(435, 40, "OFF · use Test F first")
--- Extra controls below the panel keep the main controls readable.
+statusLabel=text(166,38,"OFF · use Test F first")
+local stats=text(205,22,"Detected 0 · attempted 0 · success unverified")
+stats.TextSize=11
+local learningStats=text(230,22,"Learning and discovery running")
+learningStats.TextSize=11
+local storageStats=text(255,34,storage.status)
+storageStats.TextSize=11
+text(291,40,"Learned timing summaries are automatically sent to Discord. No player names, user IDs or raw logs are sent.")
 local function copyText(body)
     local clipboard = setclipboard or toclipboard or env.setclipboard or env.toclipboard
     local ok = type(clipboard) == "function" and pcall(clipboard, body)
     if ok then log("Logs copied")
     else
         if state.export then state.export:Destroy() end
-        local box = make("TextBox", panel, { Position = UDim2.new(0, 14, 0, 74), Size = UDim2.new(1, -28, 0, 390),
+        local box = make("TextBox", panel, { Position = UDim2.new(0, 14, 0, 74), Size = UDim2.new(1, -28, 0, 220),
             Text = body, MultiLine = true, ClearTextOnFocus = false, TextEditable = true, TextSize = 12,
             Font = Enum.Font.Code, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
             TextColor3 = Color3.new(1, 1, 1), BackgroundColor3 = Color3.fromRGB(25, 31, 42), ZIndex = 5 })
@@ -967,62 +930,18 @@ local function copyText(body)
         connect(box.FocusLost, function() box:Destroy(); state.export = nil end)
     end
 end
-button(14, 482, 174, "Copy attempt logs", function()
-    copyText("CLOVER AUTO PARRY v5 | place=" .. tostring(game.PlaceId) ..
-        " | attempts are NOT confirmed successes\n" .. table.concat(state.logs, "\n"))
+button(14,128,174,"Copy logs",function()
+    copyText("CLOVER AUTO PARRY v6 | place="..tostring(game.PlaceId).." | attempts are NOT confirmed successes\n"..
+        table.concat(state.logs,"\n").."\n\n"..learning:export().."\n\n"..discovery:export()..
+        "\n\nBACKGROUND AUDIT\n"..table.concat(audit.lines,"\n"))
 end)
-button(202, 482, 174, "Unload", function() state:Unload() end)
-panel.Size = UDim2.new(0, 390, 0, 570)
-local stats = text(513, 12, "Detected 0 · attempted 0")
-stats.TextSize = 10
-
-local discoveryPanel = make("Frame", panel, { Position = UDim2.new(1, 12, 0, 0), Size = UDim2.new(0, 390, 0, 570),
-    BackgroundColor3 = Color3.fromRGB(22, 26, 35), BorderSizePixel = 0, Visible = false })
-make("UICorner", discoveryPanel, { CornerRadius = UDim.new(0, 10) })
-local function discoveryText(y, h, caption)
-    return make("TextLabel", discoveryPanel, { Position = UDim2.new(0, 14, 0, y), Size = UDim2.new(1, -28, 0, h),
-        BackgroundTransparency = 1, Text = caption, TextColor3 = Color3.fromRGB(226, 232, 245),
-        Font = Enum.Font.Gotham, TextSize = 13, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left })
-end
-discoveryText(10, 28, "Animation discovery · F6 starts / stops")
-discoveryText(43, 60, "Records nearby NPCs and players even while auto parry is OFF. Unknown animations are candidates, not confirmed attacks.")
-local recordButton
-local function toggleDiscovery()
-    discovery.humanoid = nil; discovery.lastHealth = nil
-    discovery:setEnabled(not discovery.enabled)
-    recordButton.Text = discovery.enabled and "Recording: ON" or "Recording: OFF"
-    log(discovery.enabled and "Discovery ON · play normally; F6 stops" or "Discovery stopped · copy discovery logs")
-end
-recordButton = button(14, 110, 322, "Recording: OFF", toggleDiscovery, discoveryPanel)
-button(14, 150, 322, "Copy discovery logs", function() copyText(discovery:export()) end, discoveryPanel)
-button(14, 190, 154, "Clear discovery", function() discovery:clear(); log("Discovery cleared") end, discoveryPanel)
-local loopsButton
-loopsButton = button(182, 190, 154, "Loops: OFF", function()
-    discovery.includeLoops = not discovery.includeLoops
-    loopsButton.Text = discovery.includeLoops and "Loops: ON" or "Loops: OFF"
-    discovery:event("LOOPS=" .. tostring(discovery.includeLoops))
-end, discoveryPanel)
-local radiusButton
-radiusButton = button(14, 230, 322, "Capture radius: 20 studs", function()
-    discovery.radius = discovery.radius == 20 and 40 or (discovery.radius == 40 and 65 or 20)
-    radiusButton.Text = "Capture radius: " .. discovery.radius .. " studs"
-    discovery:event("RADIUS=" .. discovery.radius)
-end, discoveryPanel)
-local discoveryStats = discoveryText(270, 40, "0 unique candidates · 0 events")
-discoveryText(313, 65, "Copy before rerunning/unloading. IDs are grouped automatically; F inputs and health drops help compare timings. Nothing is auto-approved as an attack.")
-local auditButton
+button(202,128,174,"Unload",function() state:Unload() end)
 local function startAudit()
-    if audit.running then
-        audit.generation = audit.generation + 1; audit.running = false
-        auditButton.Text = "Scan shared timing data"
-        log("Audit cancelled; earlier results retained")
-        return
-    end
-    if not task or type(task.spawn) ~= "function" then log("Task API unavailable for background audit"); return end
-    stop("Timing audit started; auto parry OFF")
+    if audit.running or not state.alive then return end
+    audit.nextRun=os.clock()+300
+    if not task or type(task.spawn)~="function" then return end
     audit.generation = audit.generation + 1; audit.running = true
     local generation = audit.generation
-    auditButton.Text = "Cancel timing scan"
     local function current() return state.alive and audit.generation == generation end
     task.spawn(function()
         local roots, ids = {}, {}
@@ -1044,67 +963,13 @@ local function startAudit()
                 end })
         end)
         if not current() then return end
-        audit.running = false; auditButton.Text = "Scan shared timing data"
+        audit.running = false
         if fetched then
             audit.lines = result.lines; audit.markerNames = result.markerNames
-            log("Audit finished · Copy timing audit. Findings need interpretation.")
-        else audit.lines = { "AUDIT_ERROR " .. clean(result) }; log("Audit failed · Copy timing audit") end
+            audit.status="Background audit finished"
+        else audit.lines = { "AUDIT_ERROR " .. clean(result) }; audit.status="Background audit unavailable" end
     end)
 end
-auditButton = button(14, 386, 362, "Scan shared timing data", startAudit, discoveryPanel)
-button(14, 424, 362, "Copy timing audit", function()
-    copyText("place=" .. tostring(game.PlaceId) .. " running=" .. tostring(audit.running) .. "\n" ..
-        (#audit.lines > 0 and table.concat(audit.lines, "\n") or "No completed audit yet."))
-end, discoveryPanel)
-local heavyButton
-heavyButton = button(14, 462, 362, "Guard heavy trial: OFF (unverified)", function()
-    stop("Heavy trial setting changed")
-    config.heavyTrial = not config.heavyTrial
-    heavyButton.Text = config.heavyTrial and "Guard heavy trial: ON (unverified)" or "Guard heavy trial: OFF (unverified)"
-end, discoveryPanel)
-field(503, "Heavy trial delay (seconds)", .45, .05, .65, function(v) attacks["10017994824"].delay = v end, discoveryPanel)
-discoveryText(536, 28, "Marker/timing scan does not auto-enable unknown moves.")
-local learningPanel=make("Frame",panel,{Position=UDim2.new(1,12,0,0),Size=UDim2.new(0,390,0,570),
-    BackgroundColor3=Color3.fromRGB(22,26,35),BorderSizePixel=0,Visible=false})
-make("UICorner",learningPanel,{CornerRadius=UDim.new(0,10)})
-local function learningText(y,h,caption)
-    local label=text(y,h,caption); label.Parent=learningPanel; return label
-end
-learningText(10,30,"HitWindow learner · experimental")
-learningText(44,64,"Watches nearby combat animations. Two consistent completed playbacks make a timing ready for later attempts. First encounters are not protected.")
-local learnButton
-learnButton=button(14,116,362,"Learning + learned timings: ON",function()
-    stop("Learning setting changed · auto OFF")
-    learning.enabled=not learning.enabled; learning:close()
-    learnButton.Text=learning.enabled and "Learning + learned timings: ON" or "Learning + learned timings: OFF"
-end,learningPanel)
-field(156,"Learned parry lead (ms)",120,40,250,function(v) learning.lead=v/1000 end,learningPanel)
-button(14,194,362,"Copy learned timings",function() copyText(learning:export()) end,learningPanel)
-button(14,232,174,"Clear learned timings",function()
-    stop("Learned timings cleared · auto OFF"); learning:close()
-    env.__CloverHitWindowV4.rows={}; learning.model=newHitWindowModel(env.__CloverHitWindowV4.rows)
-    learning.logs={}; learning.skipped=0; storage.sent={}; storage.dirty=true; storage:save(learning.model.rows)
-end,learningPanel)
-button(202,232,174,"Refresh animation paths",function() learning:refresh(); log(learning.registryStatus) end,learningPanel)
-local learningStats=learningText(274,64,"Waiting for combat animation observations")
-learningText(342,66,"Learned timings override presets. Local cache lasts 7 days and resets on game updates. Movement/executions stay excluded. Ready is not a verified parry.")
-local reportButton
-reportButton=button(14,414,362,storage.enabled and "Share timing candidates: ON" or "Share timing candidates: OFF",function()
-    if not storage.available then
-        storage.status="Reporting unavailable: configure endpoint/request API"; return
-    end
-    storage.enabled=not storage.enabled
-    reportButton.Text=storage.enabled and "Share timing candidates: ON" or "Share timing candidates: OFF"
-    storage.status=storage.enabled and "Reporting ON: waiting for next batch" or "Reporting OFF"
-end,learningPanel)
-local storageStats=learningText(450,40,storage.diskStatus.." · "..storage.status)
-learningText(494,64,"Sharing sends place/animation IDs, marker position, spread and count to the configured reporting endpoint. No player names, IDs or raw logs. Public sharing defaults OFF.")
-button(14,532,174,"Learning settings",function()
-    learningPanel.Visible=not learningPanel.Visible; discoveryPanel.Visible=false
-end)
-button(202,532,174,"Discovery / audit",function()
-    discoveryPanel.Visible=not discoveryPanel.Visible; learningPanel.Visible=false
-end)
 
 local dragStart, panelStart
 connect(title.InputBegan, function(input)
@@ -1125,7 +990,6 @@ connect(UIS.InputBegan, function(input, processed)
     if input.KeyCode == Enum.KeyCode.F and not state.held then
         discovery:mark("OBSERVED_F_DOWN")
         scheduler.nextAllowed = os.clock() + config.cooldown
-    elseif input.KeyCode == Enum.KeyCode.F6 then toggleDiscovery()
     elseif input.KeyCode == Enum.KeyCode.F7 then switch()
     elseif input.KeyCode == Enum.KeyCode.F8 then panel.Visible = not panel.Visible end
 end)
@@ -1141,6 +1005,7 @@ for _, object in ipairs(workspace:GetDescendants()) do attach(object) end
 connect(RunService.Heartbeat, function()
     local now = os.clock()
     local ok, err = pcall(function()
+        if now>=audit.nextRun and not audit.running then startAudit() end
         local learningOK,learningError=pcall(function() learning:tick(now) end)
         if not learningOK then learning:note("TICK_ERROR "..clean(learningError)) end
         storage:tick(now,learning.model.rows,function(id) return learning:allowed(id) end)
@@ -1174,8 +1039,6 @@ connect(RunService.Heartbeat, function()
         else scheduler:clear() end
         toggle.Text = state.enabled and "Auto parry: ON" or "Auto parry: OFF"
         stats.Text = "Detected " .. state.detected .. " · attempted " .. state.attempts .. " · success unverified"
-        discoveryStats.Text = #discovery.order .. " unique scope/IDs · " .. #discovery.events .. " events\n" ..
-            "Overwritten: " .. discovery.dropped .. " · skipped: " .. (discovery.catalogSkipped + discovery.tracksSkipped)
         local ready, collecting, blocked, bundled=0,0,0,0
         for id,row in pairs(learning.model.rows) do
             if row.status=="ready" and learning:allowed(id) then ready=ready+1
@@ -1185,11 +1048,11 @@ connect(RunService.Heartbeat, function()
             local position,origin=learning:position(id)
             if position and origin=="bundled candidate" then bundled=bundled+1 end
         end
-        learningStats.Text=string.format("Ready %d · bundled %d · collecting %d · excluded %d\nWatching %d tracks · skipped %d\n%s",
-            ready,bundled,collecting,blocked,learning.activeCount,learning.skipped,learning.registryStatus)
+        learningStats.Text=string.format("Learned %d · bundled %d · collecting %d · recorded %d",
+            ready,bundled,collecting,#discovery.events)
     end)
     if not ok then stop("Runtime error: " .. tostring(err)) end
 end)
-log("Ready OFF | input=" .. (methods[1] and methods[1].name or "unavailable") ..
-    " | cooldown=0.7 user-reported | hold=0.12 | radius=8 | guard delays=.31,.31,.32,.24")
+discovery:event("CAPTURE_START automatic=true radius="..discovery.radius)
+log("Ready OFF · learning, capture and reporting are automatic")
 if game.PlaceId ~= 8248288152 then log("OFF · different place from capture; mappings may not apply") end

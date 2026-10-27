@@ -3,7 +3,7 @@ const json = (data, status, headers={}) => Response.json(data, {status, headers}
 const finite = (v, min, max) => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
 
 export function validate(data) {
-  if (!data || data.schema !== 1 || data.version !== 5 || data.place !== 8248288152 ||
+  if (!data || data.schema !== 1 || ![5,6].includes(data.version) || data.place !== 8248288152 ||
       !Number.isSafeInteger(data.placeVersion) || data.placeVersion < 0 ||
       !Array.isArray(data.profiles) || data.profiles.length < 1 || data.profiles.length > 6) return null;
   const profiles=[];
@@ -14,7 +14,7 @@ export function validate(data) {
     profiles.push({id:row.id,marker:row.marker,spread:row.spread,samples:row.samples});
   }
   // Strictly rebuild the outbound payload: names, logs and arbitrary text cannot pass through.
-  return {schema:1,version:5,place:data.place,placeVersion:data.placeVersion,
+  return {schema:1,version:data.version,place:data.place,placeVersion:data.placeVersion,
     evidence:'Untrusted client candidate; HitWindow consistency, NOT verified parry success',profiles};
 }
 

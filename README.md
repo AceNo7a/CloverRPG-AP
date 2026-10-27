@@ -1,49 +1,40 @@
 # CloverRPG-AP
 
-Experimental automatic F input using learned HitWindow positions. Starts **OFF**; passive learning starts ON. This is not an invulnerability script and does not guarantee successful parries.
+Experimental automatic F input using learned HitWindow positions. Auto parry starts **OFF**; learning, discovery, recording, periodic auditing and timing reporting run automatically while the script is loaded.
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/AceNo7a/CloverRPG-AP/main/clover_auto_parry.lua"))()
 ```
 
-F7 toggles auto parry. F8 hides the panel. F6 toggles discovery recording. Start with **Test F**, then test one nearby mob. Keep Roblox focused; losing focus or respawning switches auto OFF.
+The GUI has four controls: **Auto parry**, **Test F**, **Copy logs**, and **Unload**. F7 toggles auto parry; F8 hides the panel. There are no target, distance, delay, learning or audit settings. All nearby NPCs and players are eligible targets. Losing focus or respawning turns automatic input OFF while background features continue. Unload stops the script and its background work.
 
-## Learning
+## Automatic learning
 
-- Seven consistent marker candidates from the supplied capture are bundled for place `8248288152`, version `68598`. The live animation registry must still classify each as combat. Bundled candidates are disabled on other game versions.
-- Two consistent, completed combat playbacks establish a local profile. The last five observations continuously update its median and spread. Ready local timings override bundled timings and guard presets.
-- Executions, movement, reactions, unclassified animations, loops, incomplete playbacks, detected seeks and multiple HitWindows are excluded. A collecting, variable or multiple-marker local profile also blocks the old preset fallback until it qualifies again.
-- Prediction uses the current playback speed and a configurable lead, initially 120 ms. This lead is a starting estimate. The script does **not** learn server success, automatically optimize that lead, or infer successful-parry cooldown resets.
-- Unknown first encounters cannot be predicted before learning. Attacks without usable markers/classification are not covered. Nearby attacks can target somebody else; target intent and line of sight are not established.
-- Local profiles save through the executor file API to `clover_timings_v5_<place>.json`. Cache entries expire after seven days and are rejected after a place-version change. Unsupported file APIs leave session-only learning.
+Two consistent completed combat playbacks establish a local timing profile. Continued observations update the median and spread of the last five samples. Ready local profiles override the seven bundled candidates and guard presets. Collecting, variable or multiple-marker local profiles suppress preset fallback until qualified. Executions, movement, reactions, unclassified animations, loops, interrupted clips and detected seeks remain excluded.
 
-Attempt logs explain cooldown, range, invalid playback and late-timing skips. An F attempt or a ready profile is **not** a confirmed parry.
+Distance and timing bounds remain internal: 8-stud input range, 40-stud observation radius, 0.7-second missed-attempt cooldown, 0.12-second F hold and 120 ms predictive lead converted using current playback speed. These are implementation defaults, not a guaranteed parry window. Bundled candidates require place 8248288152/version 68598 and current combat classification. The script does not infer authoritative parry success or automatically optimize the lead based on success.
 
-## Discord reports and reviewed releases
+New attacks need usable markers and completed observations; first encounters are not protected. Nearby attacks may target somebody else. There is no invulnerability or universal parry guarantee.
 
-The workflow is: learn locally → submit timing candidates to Discord → review candidates → update the bundled table in this repository. Reports do not modify GitHub automatically. Existing sessions need to rerun the loader to receive a changed public script.
+Profiles and successful-report fingerprints persist in `clover_timings_v5_<place>.json` (the existing compatible cache format). Entries expire after seven days and are rejected on place-version changes. Unsupported file APIs leave session-only learning. Background audits run after startup and approximately every five minutes; they are bounded and do not stop auto parry.
 
-Public reporting defaults OFF and the public endpoint is currently **unconfigured**. To enable reports from other users without publishing your webhook token, deploy the optional stateless relay in `relay/`, set `PUBLIC_REPORT_URL` in the Lua file to its HTTPS `/report` URL, then release the script. Users explicitly enable **Share timing candidates**. No timing database is required.
+## Automatic Discord reporting
 
-For private owner testing, put this JSON in the executor workspace as `clover_private_reporting.json`, replacing the placeholder locally:
+[The public relay is live](https://clover-timing-relay.indigoamber16384.chatgpt.site). Every compatible installation automatically sends new or changed ready timing candidates to its `/report` endpoint. No private configuration or webhook token is needed in the client. The Discord webhook is stored as a server secret.
 
-```json
-{"webhookUrl":"YOUR_PRIVATE_DISCORD_WEBHOOK_URL","enabled":true}
-```
+Reports contain place/version, animation ID, marker position, sample count and spread. They omit player names, Roblox user IDs, server IDs, chat, raw discovery/audit logs and video. The GUI displays this behavior. **Unload** stops future reports; pressing Auto parry OFF only stops F input.
 
-Never commit that file or put a Discord token in a public loader. This private configuration enables reporting only on the installation containing it. The supplied owner's installation has been configured separately; no secret is in this repository.
+The client sends at most six changed profiles per batch, at least 60 seconds apart, with persisted 10 ms fingerprints and delivery retry/backoff. The relay validates payloads, strips arbitrary text, disables Discord mentions and uses one anonymous global request counter to limit intake to 15 requests/minute. Failed reports remain pending client-side, subject to cache availability. Network/executor shutdowns can interrupt delivery. The hosting provider handles ordinary request metadata; no player-profile database is maintained.
 
-Reports contain place/version, animation ID, marker position, sample count and spread. They omit player names, Roblox user IDs, server IDs, chat, raw discovery logs and video. At most six changed ready profiles are sent per minute; successful submissions are deduplicated locally at 10 ms position precision. Failed deliveries remain pending, with backoff and Discord retry delays. There is no durable delivery guarantee if the executor exits before saving.
-
-Client reports are untrusted candidates. They do not prove parryability, and a sample count does not prove independent users. Review classifications and repeatable combat evidence before adding them to `bundledProfiles`; update the corresponding place version deliberately. Do not promote collecting, excluded, variable or multiple-marker observations.
+Reports are untrusted candidates, not proof of successful parries or independent observers. They **do not automatically modify GitHub**. Maintainers review Discord evidence before updating `bundledProfiles` and its game-version scope. Rerun the loader to receive a release update.
 
 ## Verification
 
-On 2026-10-27: 178 Lua offline assertions and 15 relay assertions passed. Live Madium loaded v5, found all seven eligible bundled IDs, excluded tested execution/movement IDs, created the GUI and round-tripped the JSON cache. Live passive learning produced three ready guard profiles, which were saved and automatically reported. Two additional messages containing the seven imported timing summaries reached Discord with HTTP 200.
+v6 (2026-10-27): 119 Lua assertions and 17 relay assertions passed. Live Madium checks confirmed four buttons, zero settings fields, learning/recording/reporting ON, a completed 1,442-line bounded audit, and delivery of one real learned profile through the public relay to Discord. Public unauthenticated GET returned 200 and invalid POST returned 400. Auto input was left OFF.
 
-A live F test recorded one attempted press and released F, but no self animation was observed during that test. Successful automatic combat parries and PvP remain unverified. A subsequent alternative-backend comparison stopped because Roblox was not focused. Metadata inspection of CombatInfo/WeaponInfo did not establish a universal hit-timing table. No full game export or Studio reconstruction was made.
+Successful automatic combat parries and PvP remain unverified. Earlier v5 testing verified learning and cache persistence; a single F-input attempt released the key but did not produce an observed self animation in that trial.
 
-Offline tests from the repository root (Lua 5.1 and Node):
+Offline checks from this repository root:
 
 ```text
 lua tests/auto_parry_checks.lua clover_auto_parry.lua

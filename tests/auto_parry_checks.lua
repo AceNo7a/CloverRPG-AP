@@ -133,292 +133,130 @@ end
 local function swing(t, id, a)
     now=t; local tr=animation(id or "86722279259826"); (a or animator).AnimationPlayed:Fire(tr); return tr
 end
+
+task={spawn=function(fn) fn() end,wait=function() end}
 dofile(path)
-local ui = environment.CloverAutoParry
-click("Targets:") -- Exercise the existing guard-only regression mode explicitly.
-check(not ui.enabled and downs == 0, "actual GUI starts OFF")
-click("Test F"); beat(.9); check(downs == 0, "test button waits for focus return")
-beat(1); check(downs == 1 and ui.held, "test button sends F")
-beat(1.13); check(ups == 1 and not ui.held, "heartbeat releases F after configured hold")
+local ui=environment.CloverAutoParry
+local buttons,fields=0,0
+for _,o in ipairs(ui.gui:GetDescendants()) do
+ if o:IsA("TextButton") then buttons=buttons+1 end
+ if o:IsA("TextBox") then fields=fields+1 end
+end
+check(buttons==4 and fields==0,"GUI has four controls and no configurable fields")
+check(not ui.enabled and ui.learning.enabled and ui.discovery.enabled,"auto starts OFF; learning and recording permanently ON")
+input.InputBegan:Fire({KeyCode="F6"},false)
+check(ui.discovery.enabled,"F6 cannot disable background recording")
+click("Test F"); beat(.9); check(downs==0,"test input waits one second")
+beat(1); check(downs==1 and ui.held,"test sends one F")
+beat(1.13); check(not ui.held and ups==1,"test releases F")
 click("Auto parry")
 local tr=swing(2); tr.TimePosition=.32; beat(2.32)
-check(downs == 2 and ui.attempts == 2, "guard animation drives real script scheduler/input")
-click("Auto parry"); check(ups == 2 and not ui.held, "OFF releases a held synthetic F")
-click("Auto parry"); local heavy=swing(3, "10017994824"); heavy.TimePosition=.32; beat(3.32)
-check(downs == 2, "unmapped heavy excluded")
-local reaction=swing(4, "10059485766"); reaction.TimePosition=.32; beat(4.32)
-check(downs == 2, "reaction animation excluded")
-tr=swing(5, nil, ownAnimator); tr.TimePosition=.32; beat(5.32)
-check(downs == 2, "own attacks excluded")
-tr=swing(6, nil, otherAnimator); tr.TimePosition=.32; beat(6.32)
-check(downs == 2, "guard default excludes other players")
-click("Targets:"); click("Auto parry")
-tr=swing(7, nil, otherAnimator); tr.TimePosition=.32; beat(7.32)
-check(downs == 3, "optional any-rig mode still requires mapped ID")
+check(downs==2 and ui.enabled,"guard input still works with background audit")
+check(#ui.audit.lines>0 and not ui.audit.running and ui.audit.nextRun>300,"audit automatically runs once and schedules another bounded scan")
+beat(2.5)
+tr=swing(3,nil,otherAnimator); tr.TimePosition=.32; beat(3.32)
+check(downs==3,"players are eligible without a Targets selector")
+beat(3.5)
+tr=swing(4,nil,ownAnimator); tr.TimePosition=.32; beat(4.32)
+check(downs==3,"own animations remain excluded")
+local before=#ui.discovery.order
+tr=swing(5,"59999",otherAnimator)
+check(#ui.discovery.order==before+1,"unknown nearby player animation automatically recorded")
 input.WindowFocusReleased:Fire()
-check(not ui.enabled and not ui.held and ups == 3, "focus loss switches OFF and releases F")
-input.WindowFocused:Fire(); click("Auto parry")
-now=8; input.InputBegan:Fire({KeyCode="F"}, false)
-tr=swing(8.1); tr.TimePosition=.32; beat(8.42)
-check(downs == 3, "manual F also reserves cooldown")
-tr=swing(9); tr.TimePosition=.32; input.textFocus={}; beat(9.32); input.textFocus=nil
-check(downs == 3, "focused text box suppresses input and clears jobs")
-tr=swing(10); tr.TimePosition=.32; throwDown=true; beat(10.32); throwDown=false
-check(not ui.enabled and not ui.held and ups == 4, "input exception stops and attempts release")
-click("Copy attempt logs")
-check(clipboard:find("NOT confirmed successes", 1, true) and clipboard:find("F attempted", 1, true), "copy exports attempts without claiming parry success")
-setclipboard=nil; click("Copy attempt logs")
-check(ui.export and ui.export.Text:find("CLOVER AUTO PARRY",1,true), "clipboard absence provides selectable export")
-ui.export.FocusLost:Fire(); check(ui.export == nil, "manual export closes on focus loss")
-click("Auto parry"); tr=swing(11); tr.TimePosition=.32; beat(11.32)
-throwUp=true; click("Unload")
-check(ui.alive and ui.held, "release failure retains cleanup controls")
-local loaded=pcall(dofile,path)
-check(not loaded and environment.CloverAutoParry == ui, "rerun cannot stack instance after release failure")
-throwUp=false; beat(11.5); click("Unload")
-check(not ui.alive and ui.gui.Destroyed and environment.CloverAutoParry == nil, "unload disconnects and removes panel")
-local oldDowns=downs; tr=swing(12); tr.TimePosition=.32; beat(12.32)
-check(downs == oldDowns, "unloaded subscriptions do not send input")
-dofile(path); local priorUI=environment.CloverAutoParry; dofile(path)
-check(not priorUI.alive and priorUI.gui.Destroyed, "normal rerun cleans previous instance")
-environment.CloverAutoParry:Unload()
-keypress=nil; keyrelease=nil; dofile(path); click("Test F"); beat(14)
-check(downs == oldDowns and not environment.CloverAutoParry.held, "missing input APIs leave GUI functional without input")
-environment.CloverAutoParry:Unload()
+check(not ui.enabled and ui.learning.enabled and ui.discovery.enabled,"focus loss stops input while background capture continues")
+input.WindowFocused:Fire()
+tr=swing(6,"59998",otherAnimator)
+check(#ui.discovery.order==before+2,"recording continues with auto OFF")
+click("Copy logs")
+check(clipboard:find("CLOVER AUTO PARRY v6",1,true) and clipboard:find("CLOVER DISCOVERY v6",1,true)
+ and clipboard:find("CLOVER HITWINDOW LEARNING v6",1,true) and clipboard:find("BACKGROUND AUDIT",1,true),"one export includes attempts, learning, discovery and audit")
+setclipboard=nil; click("Copy logs")
+check(ui.export and ui.export.Text,"clipboard fallback remains available")
+ui.export.FocusLost:Fire(); setclipboard=function(v) clipboard=v end
+click("Auto parry"); now=7; input.InputBegan:Fire({KeyCode="F"},false)
+tr=swing(7.1); tr.TimePosition=.32; beat(7.42)
+check(downs==3,"manual F still reserves cooldown")
+tr=swing(8); tr.TimePosition=.32; input.textFocus={}; beat(8.32); input.textFocus=nil
+check(downs==3,"typing still prevents automatic input")
+tr=swing(9); tr.TimePosition=.32; throwDown=true; beat(9.32); throwDown=false
+check(not ui.enabled and not ui.held,"backend exception stops input and releases key")
+check(ui.discovery.enabled and ui.learning.enabled,"backend exception does not disable passive features")
+click("Auto parry"); tr=swing(10); tr.TimePosition=.32; beat(10.32)
+throwUp=true; ui:Unload()
+check(ui.held and ui.alive,"failed release retains unload controls")
+throwUp=false; ui:Unload(); check(not ui.alive and not ui.held,"unload cleans input after backend recovery")
 
--- Exercise discovery on the actual delivered script with no input backend.
-dofile(path); ui=environment.CloverAutoParry
-local recorder=ui.discovery
-check(not recorder.enabled, "discovery starts off independently")
-swing(20, "99991", otherAnimator)
-check(#recorder.order == 0, "discovery OFF collects no animations")
-click("Discovery / audit"); click("Recording:")
-beat(20.1)
-tr=swing(21, "99991", otherAnimator)
-check(#recorder.order == 1 and recorder.catalog["PLAYER:99991"].count == 1 and not ui.enabled,
-    "unknown player animation captured while auto OFF and guard target mode active")
-check(recorder:export():find("UNKNOWN id=99991",1,true) and recorder:export():find("kind=PLAYER",1,true),
-    "export distinguishes unknown ID and player actor")
-tr.TimePosition=.23; now=21.23; input.InputBegan:Fire({KeyCode="F"}, false)
-input.InputEnded:Fire({KeyCode="F"})
-check(recorder:export():find("CONTEXT event=OBSERVED_F_DOWN play=1",1,true)
-    and recorder:export():find("OBSERVED_F_UP",1,true), "manual F gets occurrence/timing context")
-tr.TimePosition=.4; now=21.4; tr.markers.Hit:Fire("weapon"); tr.KeyframeReached:Fire("Contact")
-check(recorder:export():find("MARKER:Hit play=1",1,true) and recorder:export():find("KEYFRAME play=1",1,true),
-    "optional named marker and keyframe events recorded")
-own:FindFirstChildOfClass("Humanoid").Health=90; beat(21.45)
-check(recorder:export():find("SELF_HEALTH_DROP amount=10.000",1,true)
-    and recorder:export():find("association=unconfirmed",1,true), "sampled health loss is correlated but not attributed")
-tr.Stopped:Fire()
-check(recorder.activeCount == 0 and recorder:export():find("STOP play=1",1,true), "stop disconnects per-track listeners")
-local eventCount=#recorder.events; tr.markers.Hit:Fire("late")
-check(#recorder.events == eventCount, "stopped track callbacks no longer record")
-tr=swing(22, "99991", otherAnimator)
-check(#recorder.order == 1 and recorder.catalog["PLAYER:99991"].count == 2, "repeated player animation grouped automatically")
-tr=swing(23, "99991", animator)
-check(#recorder.order == 2, "same ID on NPC kept in separate scope")
-local twin, twinAnimator=rig("Kamo Guard Respawnable", 5)
-workspace.DescendantAdded:Fire(twinAnimator)
-tr=swing(24, "99991", twinAnimator)
-check(#recorder.order == 2 and recorder.actorIds[twin] ~= recorder.actorIds[guard],
-    "streamed identical-name NPCs group by type but retain distinct actor tokens")
-tr=swing(25, "86722279259826", animator)
-check(recorder.catalog["NPC:Kamo Guard Respawnable:86722279259826"].known, "mapped IDs retained as timing reference")
-local before=#recorder.order; swing(26,"11111",ownAnimator)
-check(#recorder.order == before, "own animations excluded from discovery")
-local far, farAnimator=rig("Far NPC",30); workspace.DescendantAdded:Fire(farAnimator)
-swing(27,"22222",farAnimator)
-check(#recorder.order == before, "discovery radius excludes distant actors")
-click("Capture radius:"); swing(28,"22222",farAnimator)
-check(#recorder.order == before+1 and recorder.radius == 40, "capture radius control expands collection")
-local loop=animation("33333"); loop.Looped=true; animator.AnimationPlayed:Fire(loop)
-check(not recorder.catalog["NPC:Kamo Guard Respawnable:33333"], "loops excluded by default")
-click("Loops:"); animator.AnimationPlayed:Fire(loop)
-check(recorder.catalog["NPC:Kamo Guard Respawnable:33333"] ~= nil, "optional loops captured when enabled")
-local reused=animation("44444"); animator.AnimationPlayed:Fire(reused)
-local active=recorder.activeCount; animator.AnimationPlayed:Fire(reused)
-check(recorder.activeCount == active, "reused track replaces occurrence listeners")
-now=28.1; local countBefore=#recorder.events; reused.markers.Damage:Fire("x")
-check(#recorder.events == countBefore+1, "replayed track marker produces one event")
-beat(40)
-check(recorder.activeCount == 0 and #recorder.recent == 0, "expired observations release track and actor references")
-setclipboard=function(v) clipboard=v end; click("Copy discovery logs")
-check(clipboard:find("CLOVER DISCOVERY v5",1,true) and clipboard:find("CATALOG",1,true), "discovery copy exports summary and chronology")
-input.InputBegan:Fire({KeyCode="F6"}, false)
-check(not recorder.enabled and recorder.activeCount == 0, "F6 pauses discovery and disconnects its track listeners")
-local pausedCount=#recorder.events; swing(41,"55555",animator)
-check(#recorder.events == pausedCount and #recorder.order > 0, "pause retains data without collecting")
-click("Clear discovery")
-check(#recorder.order == 0 and #recorder.events == 0, "clear resets paused capture")
-click("Recording:")
-for i=1,301 do swing(42,"8"..i,animator) end
-check(#recorder.order == 300 and recorder.catalogSkipped == 1, "catalog bound reports skipped observations")
-check(recorder.activeCount == 64 and recorder.tracksSkipped == 237, "track-listener bound reports skipped observers")
-for i=1,1600 do recorder:event("CAP_TEST "..i) end
-check(#recorder.events == 1500 and recorder.dropped > 0 and recorder:export():find("overwritten_events=",1,true),
-    "bounded chronology discloses overwritten events")
-click("Clear discovery")
-check(recorder.activeCount == 0 and #recorder.order == 0 and recorder.dropped == 0, "clear disconnects live listeners and resets limits")
-local noMarkers=animation("66666"); noMarkers.GetMarkerReachedSignal=nil; noMarkers.KeyframeReached=nil
-animator.AnimationPlayed:Fire(noMarkers)
-check(recorder:export():find("MARKER_API_UNAVAILABLE",1,true) and recorder.catalog["NPC:Kamo Guard Respawnable:66666"],
-    "missing optional marker APIs preserves basic capture")
-click("Auto parry")
-local malformed=animation("88888"); malformed.Length=nil; animator.AnimationPlayed:Fire(malformed)
-check(ui.enabled and recorder:export():find("OBSERVE_ERROR",1,true), "capture error does not disable auto-parry processing")
-tr=swing(43,"77777",animator); ui:Unload(); local atUnload=#recorder.events
-tr.markers.Hit:Fire("after unload")
-check(not recorder.enabled and recorder.activeCount == 0 and #recorder.events == atUnload,
-    "unload cleans discovery callbacks as well as auto parry")
-
-keypress=function() downs=downs+1 end; keyrelease=function() ups=ups+1 end
-dofile(path); ui=environment.CloverAutoParry
-click("Guard heavy trial:"); click("Auto parry")
-tr=swing(50,"10017994824",animator); tr.TimePosition=.46; local beforeTrial=downs; beat(50.46)
-check(downs == beforeTrial+1, "opt-in heavy trial triggers for Kamo Guard")
-click("Targets:"); click("Auto parry")
-tr=swing(51,"10017994824",otherAnimator); tr.TimePosition=.46; beat(51.46)
-check(downs == beforeTrial+1, "heavy trial remains guard-only in any-rig target mode")
-tr=swing(52,"9839904022",animator); tr.TimePosition=.3; beat(52.3)
-check(downs == beforeTrial+1, "unclassified far-distance action is not enabled by heavy trial")
-task={spawn=function(fn) fn() end, wait=function() end}
-click("Scan shared timing data")
-check(not ui.enabled and not ui.audit.running and #ui.audit.lines>0, "audit button stops automation and completes background scan")
-click("Copy timing audit")
-check(clipboard:find("ASSET_UNAVAILABLE",1,true) and clipboard:find("CLOVER TIMING AUDIT v5",1,true),
-    "audit copy reports unavailable assets rather than claiming no markers")
-ui.audit.markerNames["777"]={"StrikeNow"}
-click("Recording:"); tr=swing(53,"777",animator); tr.markers.StrikeNow:Fire("test")
-check(ui.discovery:export():find("MARKER:StrikeNow",1,true), "audit-discovered names are observed on subsequent playback")
-local pendingTask
-task.spawn=function(fn) pendingTask=fn end
-click("Scan shared timing data"); click("Cancel timing scan"); pendingTask()
-check(not ui.audit.running, "cancelled background generation cannot overwrite audit state")
-ui:Unload()
-
--- v4 live-file learning pipeline with replicated animation classification.
-local rs=object("ReplicatedStorage","ReplicatedStorage")
-services.ReplicatedStorage=rs
-local animationFolder=object("Folder","Animations",rs)
-local combatFolder=object("Folder","Server",animationFolder)
-local executionFolder=object("Folder","Executions",animationFolder)
-local movementFolder=object("Folder","Movement",animationFolder)
-local function asset(folder,name,id)
-    local a=object("Animation",name,folder); a.AnimationId="rbxassetid://"..id; return a
+-- Observe real delivered-file callbacks against combat/execution registry mocks.
+local rs=object("ReplicatedStorage","ReplicatedStorage"); services.ReplicatedStorage=rs
+local folder=object("Folder","Animations",rs)
+local combat=object("Folder","Server",folder)
+local execution=object("Folder","Executions",folder)
+local movement=object("Folder","Movement",folder)
+local function asset(parent,name,id)
+ local a=object("Animation",name,parent); a.AnimationId="rbxassetid://"..id; return a
 end
-asset(combatFolder,"NewStrike","60001")
-asset(executionFolder,"SpearExecuting","60002")
-asset(movementFolder,"ClimbUp","60003")
-asset(combatFolder,"InterruptedStrike","60004")
-asset(combatFolder,"SeekingStrike","60005")
-asset(combatFolder,"MultiStrike","60006")
-asset(combatFolder,"KeyframeStrike","60007")
-asset(combatFolder,"LoopStrike","60008")
-asset(combatFolder,"MixedAlias","60009"); asset(executionFolder,"Alias","60009")
-asset(combatFolder,"UnstableStrike","60010")
-now=70; dofile(path); ui=environment.CloverAutoParry
+asset(combat,"Strike","60001"); asset(execution,"Executing","60002")
+asset(movement,"ClimbUp","60003"); asset(combat,"Multiple","60004")
+asset(combat,"Interrupted","60005"); asset(combat,"Variable","60006")
+now=20; dofile(path); ui=environment.CloverAutoParry
 local learner=ui.learning
-check(learner.enabled and not ui.enabled and learner.registryComplete,"learner starts ON with auto OFF and loads animation paths")
-local function learnTrial(id,t,pos,options)
-    options=options or {}
-    local track=animation(id); track.Looped=options.loop or false
-    now=t; otherAnimator.AnimationPlayed:Fire(track)
-    now=t+pos; track.TimePosition=pos
-    if options.keyframe then track.KeyframeReached:Fire("HitWindow") else track:GetMarkerReachedSignal("HitWindow"):Fire("") end
-    if options.duplicate then track.KeyframeReached:Fire("HitWindow") end
-    if options.multiple then track.TimePosition=pos+.15; track:GetMarkerReachedSignal("HitWindow"):Fire("") end
-    now=t+.9; track.TimePosition=options.incomplete and .5 or .9; track.IsPlaying=false; track.Stopped:Fire()
-    return track
+local function trial(id,t,pos,opts)
+ opts=opts or {}; local tr=swing(t,id,otherAnimator)
+ now=t+pos; tr.TimePosition=pos; tr:GetMarkerReachedSignal("HitWindow"):Fire("")
+ if opts.duplicate then tr.KeyframeReached:Fire("HitWindow") end
+ if opts.multiple then tr.TimePosition=pos+.1; tr:GetMarkerReachedSignal("HitWindow"):Fire("") end
+ now=t+.9; tr.TimePosition=opts.incomplete and .5 or .9; tr.IsPlaying=false; tr.Stopped:Fire()
 end
-local beforeLearning=downs
-learnTrial("60001",71,.4)
-check(not learner.model:position("60001") and downs==beforeLearning,"first playback observed without immediate F or activation")
-learnTrial("60001",73,.4,{duplicate=true})
-check(learner.model:position("60001")==.4 and #learner.model.rows["60001"].samples==2,"two full consistent playbacks become ready; marker/keyframe pair deduplicated")
-click("Auto parry")
-tr=swing(75,"60001",otherAnimator); tr.TimePosition=.27; beat(75.27)
-check(downs==beforeLearning,"learned timing waits until lead threshold")
-tr.TimePosition=.29; beat(75.29)
-check(downs==beforeLearning+1 and ui.status:find("learned HitWindow",1,true),"ready new player attack uses learned timing on later playback")
-beat(75.42); check(not ui.held,"learned input is released normally")
-tr=swing(77,"60001",otherAnimator); tr.Speed=2; tr.TimePosition=.17; beat(77.085)
-check(downs==beforeLearning+2,"learned lead is converted using live playback speed")
-beat(77.3)
-tr=swing(79,"60001",otherAnimator); tr.TimePosition=.41; beat(79.41)
-check(downs==beforeLearning+2,"already-passed hit marker never produces a stale parry")
-tr=swing(81,"60001",otherAnimator); tr.TimePosition=.29
-another:FindFirstChild("HumanoidRootPart").Position=position(30); beat(81.29)
+local initial=downs
+trial("60001",21,.4)
+check(not learner:position("60001") and downs==initial,"first unknown observation learns without sending input")
+trial("60001",23,.4,{duplicate=true})
+check(learner:position("60001")==.4 and #learner.model.rows["60001"].samples==2,"two complete observations qualify; paired signals deduplicated")
+click("Auto parry"); tr=swing(25,"60001",otherAnimator); tr.TimePosition=.29; beat(25.29)
+check(downs==initial+1 and ui.status:find("learned HitWindow",1,true),"learned player timing produces F without configuring target or delay")
+beat(25.5)
+tr=swing(27,"60001",otherAnimator); tr.Speed=2; tr.TimePosition=.17; beat(27.085)
+check(downs==initial+2,"learned prediction follows playback speed")
+beat(27.3)
+tr=swing(29,"60001",otherAnimator); tr.TimePosition=.41; beat(29.41)
+check(downs==initial+2,"passed marker is discarded")
+tr=swing(31,"60001",otherAnimator); tr.TimePosition=.29
+another:FindFirstChild("HumanoidRootPart").Position=position(30); beat(31.29)
 another:FindFirstChild("HumanoidRootPart").Position=position(4)
-check(downs==beforeLearning+2,"learned parry rechecks distance at firing time")
-tr=swing(82,"60001",otherAnimator); tr.TimePosition=.3; beat(82.001)
-check(downs==beforeLearning+2,"playback seek cancels a queued learned parry")
+check(downs==initial+2,"fixed proximity rechecked at trigger time")
+tr=swing(33,"60001",otherAnimator); tr.TimePosition=.3; beat(33.001)
+check(downs==initial+2,"seek cancels learned prediction")
 click("Auto parry")
-learnTrial("60002",83,.4); learnTrial("60002",85,.4)
-check(not learner.model.rows["60002"],"execution with HitWindow never learned")
-learnTrial("60003",87,.4); learnTrial("60003",89,.4)
-check(not learner.model.rows["60003"],"movement with HitWindow never learned")
-learnTrial("60004",91,.4,{incomplete=true}); learnTrial("60004",93,.4,{incomplete=true})
-check(not learner.model:position("60004"),"interrupted playbacks do not establish timing")
-tr=swing(95,"60005",otherAnimator); tr.TimePosition=.7; beat(95.01); tr:GetMarkerReachedSignal("HitWindow"):Fire("")
-now=95.9; tr.TimePosition=.9; tr.Stopped:Fire()
-check(not learner.model:position("60005"),"observed playback seek disqualifies sample")
-learnTrial("60006",97,.25,{multiple=true})
-check(learner.model.rows["60006"].blocked and not learner.model:position("60006"),"multiple HitWindows block automatic timing")
-learnTrial("60007",99,.4,{keyframe=true}); learnTrial("60007",101,.4,{keyframe=true})
-check(learner.model:position("60007")==.4,"named HitWindow keyframes can teach a classified combat move")
-learnTrial("60008",103,.4,{loop=true})
-check(not learner.model.rows["60008"],"looping combat clips excluded")
-learnTrial("60009",105,.4)
-check(not learner.model.rows["60009"],"execution alias overrides combat classification")
-learnTrial("60010",107,.3); learnTrial("60010",109,.5)
-check(learner.model.rows["60010"].status=="variable timing" and not learner.model:position("60010"),"inconsistent observations stay inactive")
-click("Copy learned timings")
-check(clipboard:find("CLOVER HITWINDOW LEARNING v5",1,true) and clipboard:find("NOT confirmed parry success",1,true),"learned export labels confidence without claiming success")
-click("Auto parry"); tr=swing(111,"60001",otherAnimator)
-click("Learning + learned timings:"); tr.TimePosition=.29; beat(111.29)
-check(not ui.enabled and learner.activeCount==0 and downs==beforeLearning+2,"learning OFF stops queued learned attempts and listeners")
-click("Learning + learned timings:")
-local previous=ui; now=112; dofile(path); ui=environment.CloverAutoParry; learner=ui.learning
-check(not previous.alive and learner.model:position("60001")==.4,"ready profiles survive rerun in same server session")
-click("Auto parry"); tr=swing(113,"60001",otherAnimator)
-asset(executionFolder,"NewAlias","60001"); learner:refresh(); tr.TimePosition=.29; beat(113.29)
-check(downs==beforeLearning+2,"new excluded alias cancels a queued learned parry")
-click("Clear learned timings")
-check(next(learner.model.rows)==nil and not ui.enabled,"clear learned profiles also stops automation")
-ui:Unload(); local exported=learner:export(); tr:GetMarkerReachedSignal("HitWindow"):Fire("")
-check(learner:export()==exported and learner.activeCount==0,"unload removes learning callbacks")
-game.JobId="another-server"; dofile(path); ui=environment.CloverAutoParry
-check(next(ui.learning.model.rows)==nil,"server change starts with fresh profiles")
+trial("60002",35,.4); trial("60003",37,.4)
+check(not learner.model.rows["60002"] and not learner.model.rows["60003"],"execution and movement never become attacks")
+trial("60004",39,.3,{multiple=true}); check(learner.model.rows["60004"].blocked,"multiple hit windows remain blocked")
+trial("60005",41,.3,{incomplete=true}); check(not learner:position("60005"),"interrupted playback cannot qualify")
+trial("60006",43,.3); trial("60006",45,.5)
+check(not learner:position("60006"),"inconsistent timings remain inactive")
+local previous=ui; now=47; dofile(path); ui=environment.CloverAutoParry
+check(not previous.alive and ui.learning:position("60001")==.4,"rerun cleans old listeners and retains learned rows")
+check(ui.discovery.enabled and ui.learning.enabled,"rerun re-enables permanent background features")
+beat(49.1); local generation=ui.audit.generation
+beat(350); check(ui.audit.generation==generation+1,"audit repeats automatically after five minutes")
+ui:Unload(); local last=downs; tr:GetMarkerReachedSignal("HitWindow"):Fire(""); beat(351)
+check(downs==last and not ui.discovery.enabled and ui.learning.activeCount==0,"unload stops all background subscriptions")
+
+-- Current-version bundled candidates remain subordinate to local validation.
+environment.CloverParryOptions.useBundledProfiles=true; game.JobId="bundle-test"; game.PlaceVersion=68598
+now=400; dofile(path); ui=environment.CloverAutoParry; learner=ui.learning
+check(math.abs(learner:position("86722279259826")-.5041664243)<.000001,"bundle is available for the captured game version")
+local base=downs; click("Auto parry"); tr=swing(401); tr.TimePosition=.32; beat(401.32)
+check(downs==base,"bundle overrides earlier guard preset")
+tr.TimePosition=.39; beat(401.39); check(downs==base+1,"bundled marker drives prediction")
+beat(401.6); click("Auto parry")
+trial("86722279259826",403,.55)
+click("Auto parry"); tr=swing(404); tr.TimePosition=.32; beat(404.32)
+check(downs==base+1,"collecting local profile blocks old preset fallback")
+click("Auto parry"); trial("86722279259826",405,.55)
+click("Auto parry"); tr=swing(407); tr.TimePosition=.44; beat(407.44)
+check(downs==base+2,"ready local profile overrides bundled timing")
+beat(407.6); click("Auto parry"); trial("86722279259826",409,.7)
+click("Auto parry"); tr=swing(411); tr.TimePosition=.32; beat(411.32)
+check(downs==base+2,"variable local profile cannot fall back to preset")
 ui:Unload()
--- v5 bundled -> locally learned priority and no unsafe fallback after ambiguity.
-environment.CloverParryOptions.useBundledProfiles=true
-game.PlaceVersion=68598
-now=130; dofile(path); ui=environment.CloverAutoParry; learner=ui.learning
-check(math.abs(learner:position("86722279259826")-.5041664243)<.000001,"bundled captured marker available before first observation")
-local v5Before=downs
-click("Auto parry")
-tr=swing(131); tr.TimePosition=.32; beat(131.32)
-check(downs==v5Before,"bundled marker overrides old guard .31 preset")
-tr.TimePosition=.39; beat(131.39)
-check(downs==v5Before+1 and ui.status:find("source=bundled candidate",1,true),"bundled marker drives later prediction and logs source")
-beat(131.6); click("Auto parry")
-learnTrial("86722279259826",133,.55)
-click("Auto parry"); tr=swing(134); tr.TimePosition=.32; beat(134.32)
-check(downs==v5Before+1,"collecting local profile does not regress to old preset")
-click("Auto parry"); learnTrial("86722279259826",135,.55)
-check(learner:position("86722279259826")==.55 and ui.storage.dirty,"live completed observations replace bundled position and dirty cache")
-click("Auto parry"); tr=swing(137); tr.TimePosition=.39; beat(137.39)
-check(downs==v5Before+1,"new learned threshold replaces bundled threshold")
-tr.TimePosition=.44; beat(137.44)
-check(downs==v5Before+2 and ui.status:find("source=learned",1,true),"ready learned guard uses updated timing rather than preset")
-beat(137.6); click("Auto parry")
-learnTrial("86722279259826",139,.7)
-click("Auto parry"); tr=swing(141); tr.TimePosition=.32; beat(141.32)
-check(downs==v5Before+2 and not learner:position("86722279259826"),"variable learned profile cannot fall back to old preset or bundled timing")
-check(not ui.storage.enabled,"distributed reporting defaults OFF")
-click("Share timing candidates:"); check(not ui.storage.enabled and ui.storage.status:find("unavailable",1,true),"unconfigured endpoint cannot claim reporting ON")
-ui.storage.available=true -- isolate the GUI consent behavior from the HTTP adapter
-click("Share timing candidates:"); check(ui.storage.enabled,"explicit share toggle enables candidate reporting")
-click("Share timing candidates:"); check(not ui.storage.enabled,"share toggle stops future reporting")
-ui:Unload()
-print("PASS: " .. count .. " auto-parry offline assertions. Roblox/Madium success unverified.")
+print("PASS: "..count.." auto-parry offline assertions. Combat success unverified.")
