@@ -1,8 +1,94 @@
--- Clover auto parry v6.6: optional flight/speed controls and reviewed timing bundles.
+-- Clover auto parry v6.7: flight-reset and parry-outcome diagnostics; control timings unchanged.
 -- Run this entire file. Starts OFF. No remote hooks or packet replay.
 -- Automatic reporting sends numeric timing candidates only; no remote code is fetched.
 -- Manual F timings are starting estimates, not measured server parry windows.
 -- Learned positions take priority. Bundled candidates remain unverified for parry success.
+
+-- BEGIN OUTCOME DIAGNOSTICS
+-- Client observations only. Never infer server acceptance from input or animation.
+local function newOutcomeDiagnostics(ctx)
+    local d={lifecycle={},flight={},parry={},dropped={lifecycle=0,flight=0,parry=0},
+        rows={},serial=0,nextFlight=0,lastTick=nil,maxFrame=0,connections={}}
+    function d:note(bucket,message)
+        local list=self[bucket]; local cap=bucket=="parry" and 300 or 160
+        list[#list+1]=string.format("[%.6f] %s",ctx.now(),message)
+        if #list>cap then table.remove(list,1); self.dropped[bucket]=self.dropped[bucket]+1 end
+    end
+    function d:snapshot(item,owner)
+        local ok,value=pcall(ctx.snapshot,item,owner)
+        return ok and value or "snapshot_unavailable="..tostring(value)
+    end
+    function d:life(kind,detail,owner)
+        self:note("lifecycle",kind.." "..(detail or "").." "..self:snapshot(nil,owner))
+    end
+    function d:movement(kind,detail,owner)
+        if kind=="START" and owner.mode=="fly" then
+            self.flight={}; self.dropped.flight=0; self.nextFlight=0; self.maxFrame=0
+        end
+        self:life("MOVEMENT_"..kind,detail,owner)
+    end
+    function d:attempt(item,backend)
+        self.serial=self.serial+1
+        local row={token=self.serial,item=item,down=ctx.now(),phase=1}
+        self.rows[#self.rows+1]=row
+        if #self.rows>32 then table.remove(self.rows,1) end
+        self:note("parry","INPUT_DOWN attempt="..row.token.." attack="..tostring(item.id).." backend="..backend)
+        return row
+    end
+    function d:inputResult(row,ok,err)
+        if not row then return end
+        row.sent=ok
+        self:note("parry","INPUT_RESULT attempt="..row.token.." api_ok="..tostring(ok).." error="..tostring(err)..
+            " accepted_by_game=unknown "..self:snapshot(row.item))
+    end
+    function d:released(row,ok,reason)
+        if not row then return end
+        if ok then row.up=ctx.now() end
+        self:note("parry",string.format("INPUT_UP attempt=%d api_ok=%s elapsed_ms=%.2f reason=%s %s",
+            row.token,tostring(ok),(ctx.now()-row.down)*1000,tostring(reason),self:snapshot(row.item)))
+    end
+    function d:correlate(kind,detail)
+        local now=ctx.now(); local found=0
+        for i=#self.rows,1,-1 do
+            local row=self.rows[i]; local age=now-row.down
+            if age>=0 and age<=1.25 and found<4 then
+                found=found+1
+                local up=row.up and string.format("%.2f",(now-row.up)*1000) or "not_released"
+                self:note("parry",string.format("%s attempt=%d after_down_ms=%.2f after_up_ms=%s %s association=temporal_only %s",
+                    kind,row.token,age*1000,up,detail,self:snapshot(row.item)))
+            end
+        end
+        if found==0 then self:note("parry",kind.." recent_attempt=none "..detail.." "..self:snapshot()) end
+    end
+    function d:tick(mode,owner)
+        local now=ctx.now()
+        if self.lastTick then self.maxFrame=math.max(self.maxFrame,now-self.lastTick) end
+        self.lastTick=now
+        if mode=="fly" and now>=self.nextFlight then
+            self.nextFlight=now+.25
+            self:note("flight",string.format("FLIGHT_SAMPLE max_heartbeat_gap_ms=%.2f %s",self.maxFrame*1000,self:snapshot(nil,owner)))
+            self.maxFrame=0
+        end
+        local phases={.05,.15,.30,.60}
+        for _,row in ipairs(self.rows) do
+            local due=phases[row.phase]
+            if due and now-row.down>=due then
+                self:note("parry",string.format("POST_INPUT attempt=%d requested_age_ms=%.0f actual_age_ms=%.2f %s",
+                    row.token,due*1000,(now-row.down)*1000,self:snapshot(row.item)))
+                row.phase=row.phase+1
+            end
+        end
+    end
+    function d:export()
+        return "OUTCOME DIAGNOSTICS | client evidence; no authoritative reset reason or parry result\n"..
+            "LIFECYCLE overwritten="..self.dropped.lifecycle.."\n"..table.concat(self.lifecycle,"\n")..
+            "\nLAST FLIGHT TRACE overwritten="..self.dropped.flight.."\n"..table.concat(self.flight,"\n")..
+            "\nPARRY OUTCOMES overwritten="..self.dropped.parry.."\n"..table.concat(self.parry,"\n")
+    end
+    return d
+end
+-- END OUTCOME DIAGNOSTICS
+
 
 -- BEGIN MOVEMENT CONTROLLER
 -- Explicit local controls; no property spoofing, remote hooks or detection bypass.
@@ -16,7 +102,9 @@ local function newMovementControl(ctx)
         if #self.events>100 then table.remove(self.events,1) end
     end
     function m:stop(reason)
-        local previous=self.mode; self.mode="off"
+        local previous=self.mode
+        if previous~="off" and ctx.event then pcall(ctx.event,"STOP",reason or "disabled",self) end
+        self.mode="off"
         if self.flight then pcall(self.flight.destroy); self.flight=nil end
         local h=self.humanoid
         if h then
@@ -52,6 +140,7 @@ local function newMovementControl(ctx)
             end
             self.status=mode=="fly" and "Fly 32 · WASD, E up / Q down" or "Speed 155 · waiting for normal movement"
             self:note("START mode="..mode.." original_speed="..tostring(h.WalkSpeed))
+            if ctx.event then pcall(ctx.event,"START",mode,self) end
         end)
         if not ok then self:stop("start failed: "..tostring(err)); self:note(self.status) end
         return ok
@@ -61,10 +150,12 @@ local function newMovementControl(ctx)
         local ok,err=pcall(function()
             local char,h,r=ctx.rig()
             if not ctx.focused() then self:stop("focus lost"); return end
-            if char~=self.character or h~=self.humanoid or r~=self.root or not h or h.Health<=0 then
-                self:stop("character changed or died"); return
-            end
-            if r.Anchored or h.Sit then self:stop("anchored or seated"); return end
+            if char~=self.character then self:stop("character reference changed"); return end
+            if h~=self.humanoid or not h then self:stop("humanoid replaced or removed"); return end
+            if r~=self.root or not r then self:stop("root replaced or removed"); return end
+            if h.Health<=0 then self:stop("health nonpositive"); return end
+            if r.Anchored then self:stop("root anchored"); return end
+            if h.Sit then self:stop("seated"); return end
             local stateName=tostring(h:GetState()):match("([^%.]+)$")
             if stateName~=self.lastState then
                 self:note("STATE "..stateName.." speed="..tostring(h.WalkSpeed)); self.lastState=stateName
@@ -598,7 +689,7 @@ local auditSeeds = { "86722279259826", "107811934597910", "122307357536158", "99
     "10017994824", "9839904022", "10017151218", "10036138066", "10028752861", "10059485766" }
 local order = { "86722279259826", "107811934597910", "122307357536158", "99787918237880" }
 local config = { radius = 8, cooldown = 0.7, hold = 0.12, offset = 0, guardsOnly = false, heavyTrial = false }
-local state = { version = 6, release = "6.6", alive = true, enabled = false, focused = true, connections = {}, animators = {},
+local state = { version = 6, release = "6.7", alive = true, enabled = false, focused = true, connections = {}, animators = {},
     logs = {}, attempts = 0, detected = 0, held = false, releaseAt = 0, testAt = nil }
 env.CloverAutoParry = state
 local scheduler = newScheduler()
@@ -738,6 +829,7 @@ local function connect(signal, callback)
     return c
 end
 
+local diagnostics,diagnosticCall
 local methods = {}
 local down, up = keypress or env.keypress, keyrelease or env.keyrelease
 if type(down) == "function" and type(up) == "function" then
@@ -752,32 +844,44 @@ if okVIM and vim then
     end }
 end
 local methodIndex = 1
-local function release()
+local function release(reason)
     if not state.held then return true end
     local ok, err = pcall(state.heldMethod.send, false)
+    if diagnosticCall then diagnosticCall("released",state.diagnosticAttempt,ok,reason or "stop/release") end
+    if ok then state.diagnosticAttempt=nil end
     if ok then state.held = false; state.heldMethod = nil; discovery:mark("AUTO_F_UP")
     else log("F release failed: " .. tostring(err)) end
     return ok
 end
 local function inputAllowed()
-    if not state.focused or UIS:GetFocusedTextBox() then return false end
+    if not state.focused then return false,"window focus lost" end
+    if UIS:GetFocusedTextBox() then return false,"text box focused" end
     local active = isrbxactive or isgameactive or env.isrbxactive or env.isgameactive
     if type(active) == "function" then
         local ok, result = pcall(active)
-        if ok and not result then return false end
+        if ok and not result then return false,"executor reports game inactive" end
     end
     local character = player.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    return humanoid and humanoid.Health > 0
+    if not humanoid then return false,"no humanoid" end
+    if humanoid.Health<=0 then return false,"health nonpositive" end
+    return true,"available"
 end
 local function press(item)
-    if state.held or not inputAllowed() or UIS:IsKeyDown(Enum.KeyCode.F) then return false end
+    local allowed,reason=inputAllowed()
+    if state.held or not allowed or UIS:IsKeyDown(Enum.KeyCode.F) then
+        if diagnosticCall then diagnosticCall("note","parry","INPUT_REJECT attack="..item.id.." reason="..
+            (state.held and "script already holds F" or (not allowed and reason or "F already down"))) end
+        return false
+    end
     local method = methods[methodIndex]
     if not method then log("No supported input API available."); return false end
     -- Retain release ownership even if a backend throws after partly sending input.
     state.held, state.heldMethod = true, method
     state.releaseAt = os.clock() + config.hold
+    state.diagnosticAttempt=diagnosticCall and diagnosticCall("attempt",item,method.name)
     local ok, err = pcall(method.send, true)
+    if diagnosticCall then diagnosticCall("inputResult",state.diagnosticAttempt,ok,err) end
     if not ok then
         release(); state.enabled = false
         log("Input failed. OFF. Try another input method: " .. tostring(err))
@@ -798,6 +902,7 @@ local function root(model)
 end
 local movement=newMovementControl({
     now=os.clock,
+    event=function(kind,detail,owner) if diagnosticCall then diagnosticCall("movement",kind,detail,owner) end end,
     focused=function() return state.alive and state.focused end,
     rig=function()
         local char=player.Character
@@ -859,6 +964,140 @@ local function attackRange(item)
     if wolfIds[item.id] and item.actor and item.actor.Name=="Wolf" and not Players:GetPlayerFromCharacter(item.actor) then return 12 end
     return config.radius
 end
+local function diagnosticSnapshot(item,owner)
+    local fields={}
+    local function field(name,fn)
+        local ok,value=pcall(fn)
+        fields[#fields+1]=name.."="..(ok and clean(value) or "unavailable")
+    end
+    local function vec(v) return string.format("%.2f,%.2f,%.2f",v.X,v.Y,v.Z) end
+    local char=owner and owner.character or player.Character
+    local h=owner and owner.humanoid or (char and char:FindFirstChildOfClass("Humanoid"))
+    local r=owner and owner.root or root(char)
+    field("health",function() return h.Health end)
+    field("humanoid_state",function() return h:GetState() end)
+    field("walkspeed",function() return h.WalkSpeed end)
+    field("stand",function() return h.PlatformStand end)
+    field("rotate",function() return h.AutoRotate end)
+    field("sit",function() return h.Sit end)
+    field("position",function() return vec(r.Position) end)
+    field("velocity",function() return vec(r.AssemblyLinearVelocity) end)
+    field("anchored",function() return r.Anchored end)
+    field("char_in_world",function() return char:IsDescendantOf(workspace) end)
+    field("root_in_char",function() return r:IsDescendantOf(char) end)
+    field("destroy_height",function() return workspace.FallenPartsDestroyHeight end)
+    field("flight_constraint",function() return r:FindFirstChild("CloverFlightVelocity")~=nil end)
+    field("requested_velocity",function() return vec(r:FindFirstChild("CloverFlightVelocity").VectorVelocity) end)
+    field("focused",function() return state.focused end)
+    field("typing",function() return UIS:GetFocusedTextBox()~=nil end)
+    field("f_held_by_script",function() return state.held end)
+    field("scheduled_release_in_ms",function() return state.held and string.format("%.2f",(state.releaseAt-os.clock())*1000) or "not_held" end)
+    field("network_ping_ms",function() return string.format("%.1f",player:GetNetworkPing()*1000) end)
+    field("tool",function() local tool=char:FindFirstChildOfClass("Tool"); return tool and tool.Name or "none" end)
+    field("combat_flags",function()
+        local values={}
+        for _,obj in ipairs({char,h}) do
+            local attrs=obj:GetAttributes(); local keys={}
+            for key in pairs(attrs) do keys[#keys+1]=key end; table.sort(keys)
+            for _,key in ipairs(keys) do
+                local low=key:lower()
+                if low:find("parry",1,true) or low:find("block",1,true) or low:find("stun",1,true)
+                    or low:find("dodge",1,true) or low:find("ragdoll",1,true) or low:find("attack",1,true) then
+                    local value=attrs[key]
+                    if type(value)=="number" or type(value)=="boolean" then values[#values+1]=key..":"..tostring(value) end
+                end
+                if #values>=12 then break end
+            end
+        end
+        return #values>0 and table.concat(values,",") or "none_observed"
+    end)
+    field("self_tracks",function()
+        local animator=h:FindFirstChildOfClass("Animator"); local list={}
+        for i,track in ipairs(animator:GetPlayingAnimationTracks()) do
+            if i>6 then break end
+            list[#list+1]=tostring(track.Animation.AnimationId):match("%d+").."@"..string.format("%.3f",track.TimePosition)
+        end
+        return table.concat(list,",")
+    end)
+    if item then
+        field("attack",function() return item.id end)
+        field("source",function() return item.source or "preset/test" end)
+        field("target_pos",function() return item.target end)
+        field("marker_pos",function() return item.hitPosition end)
+        field("track_pos",function() return item.track.TimePosition end)
+        field("track_speed",function() return item.track.Speed end)
+        field("track_playing",function() return item.track.IsPlaying end)
+        field("threshold_late_ms",function() return string.format("%.2f",(item.track.TimePosition-item.target)/item.track.Speed*1000) end)
+        field("distance",function() return string.format("%.2f",distance(item.actor)) end)
+        field("range",function() return attackRange(item) end)
+        field("enemy_facing_dot",function()
+            local other=root(item.actor); return string.format("%.3f",other.CFrame.LookVector:Dot((r.Position-other.Position).Unit))
+        end)
+        field("self_facing_dot",function()
+            return string.format("%.3f",r.CFrame.LookVector:Dot((root(item.actor).Position-r.Position).Unit))
+        end)
+    end
+    return table.concat(fields," ")
+end
+diagnostics=newOutcomeDiagnostics({now=os.clock,snapshot=diagnosticSnapshot})
+state.diagnostics=diagnostics
+diagnosticCall=function(method,...)
+    local ok,value=pcall(diagnostics[method],diagnostics,...)
+    if not ok then state.diagnosticError=clean(value); return end
+    return value
+end
+local function clearDiagnosticBindings()
+    for _,c in ipairs(diagnostics.connections) do c:Disconnect() end
+    diagnostics.connections={}
+end
+local function bindDiagnosticCharacter()
+    local char=player.Character; local h=char and char:FindFirstChildOfClass("Humanoid"); local r=root(char)
+    if diagnostics.character==char and diagnostics.humanoid==h and diagnostics.root==r then return end
+    clearDiagnosticBindings()
+    diagnostics.character=char; diagnostics.humanoid=h; diagnostics.root=r
+    diagnostics.signalHealth=nil
+    diagnosticCall("life","BIND_CHARACTER","char="..tostring(char~=nil).." humanoid="..tostring(h~=nil).." root="..tostring(r~=nil))
+    local function watch(signal,fn)
+        if signal then
+            local ok,c=pcall(function() return signal:Connect(function(...) pcall(fn,...) end) end)
+            if ok then diagnostics.connections[#diagnostics.connections+1]=c end
+        end
+    end
+    local captured={character=char,humanoid=h,root=r}
+    if h then
+        watch(h.Died,function() diagnosticCall("life","HUMANOID_DIED","",captured) end)
+        local previousHealth=h.Health
+        watch(h.HealthChanged,function(value)
+            if previousHealth and value<previousHealth then
+                diagnostics.signalHealth=value
+                diagnosticCall("correlate","DAMAGE",string.format("amount=%.3f health=%.3f source=HealthChanged",previousHealth-value,value))
+                if movement.mode=="fly" then diagnosticCall("life","FLIGHT_HEALTH_DROP","health="..value,captured) end
+            end
+            previousHealth=value
+            if value<=0 then diagnosticCall("life","HEALTH_NONPOSITIVE","value="..value,captured) end
+        end)
+        watch(h.StateChanged,function(old,new)
+            if movement.mode=="fly" or tostring(new):find("Dead",1,true) then
+                diagnosticCall("life","STATE_CHANGED",tostring(old).." -> "..tostring(new),captured)
+            end
+        end)
+    end
+    if char then watch(char.AncestryChanged,function(_,parent)
+        diagnosticCall("life","CHARACTER_ANCESTRY","parent_present="..tostring(parent~=nil),captured)
+    end) end
+    if r then
+        watch(r.AncestryChanged,function(_,parent)
+            diagnosticCall("life","ROOT_ANCESTRY","parent_present="..tostring(parent~=nil),captured)
+        end)
+        watch(r.ChildRemoved,function(child)
+            if child.Name=="CloverFlightVelocity" or child.Name=="CloverFlightAttachment" then
+                diagnosticCall("life","FLIGHT_OBJECT_REMOVED","object="..child.Name.." movement="..movement.mode,captured)
+            end
+        end)
+    end
+end
+
+
 scheduler.onSkip=function(item,reason)
     local detail=""
     local ok,value=pcall(function()
@@ -867,6 +1106,7 @@ scheduler.onSkip=function(item,reason)
     end)
     detail=ok and value or " distance=unavailable track=unavailable"
     log("SKIP id="..item.id.." reason="..reason..detail)
+    diagnosticCall("note","parry","SKIP reason="..reason.." cooldown_remaining="..math.max(0,scheduler.nextAllowed-os.clock()).." "..diagnostics:snapshot(item))
 end
 function learning:note(message)
     self.logs[#self.logs+1] = string.format("[%.6f] %s", os.clock(), message)
@@ -1084,7 +1324,7 @@ function learning:tick(now)
 end
 function learning:export()
     for track,item in pairs(self.active) do self:trace("TRACK_AT_EXPORT",track,item) end
-    local lines={"CLOVER MARKER LEARNING v6.6 | place="..game.PlaceId,
+    local lines={"CLOVER MARKER LEARNING v6.7 | place="..game.PlaceId,
         "Accepted names: HitWindow, Attack. Movement and executions remain excluded.",
         "Ready = consistent marker position; NOT confirmed parry success. First encounters are not protected by learning.",
         "lead_seconds="..self.lead.." enabled="..tostring(self.enabled).." skipped_tracks="..self.skipped.." overwritten_diagnostics="..self.overwritten,
@@ -1193,6 +1433,10 @@ function discovery:tick(now)
         local health = human.Health
         if self.lastHealth and health < self.lastHealth then
             self:mark(string.format("SELF_HEALTH_DROP amount=%.3f health=%.3f", self.lastHealth - health, health))
+            if diagnostics.signalHealth~=health then
+                diagnosticCall("correlate","DAMAGE",string.format("amount=%.3f health=%.3f source=poll",self.lastHealth-health,health))
+            end
+            diagnostics.signalHealth=nil
         end
         self.lastHealth = health
     end
@@ -1204,6 +1448,14 @@ local function attach(animator)
         local ok, err = pcall(function()
             local actor = actorFor(animator)
             local id = tostring(track.Animation.AnimationId):match("%d+")
+            if actor==player.Character then
+                local row=diagnostics.rows[#diagnostics.rows]
+                local paths=learning.paths[id] and table.concat(learning.paths[id],"|") or track.Name
+                local lower=tostring(paths):lower()
+                if (row and os.clock()-row.down<=1.25) or lower:find("parry",1,true) or lower:find("block",1,true) then
+                    diagnosticCall("correlate","SELF_ANIMATION","id="..tostring(id).." path="..clean(paths).." priority="..tostring(track.Priority))
+                end
+            end
             local learnedOK, learnedError=pcall(function() learning:observe(actor,track,id) end)
             if not learnedOK then learning:note("OBSERVE_ERROR "..clean(learnedError)) end
             local observed, observeError = pcall(function() discovery:observe(actor, track, id) end)
@@ -1239,6 +1491,7 @@ function state:Unload()
     -- Keep the panel available for another release attempt if a backend fails.
     if self.held then log("Release failed; press/release F, then retry Unload."); return end
     storage:save(learning.model.rows)
+    clearDiagnosticBindings()
     discovery:setEnabled(false)
     learning:close()
     audit.generation = audit.generation + 1; audit.running = false
@@ -1265,7 +1518,7 @@ local function text(y, h, value)
         BackgroundTransparency = 1, Text = value, TextColor3 = Color3.fromRGB(226, 232, 245),
         Font = Enum.Font.Gotham, TextSize = 13, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left })
 end
-local title=text(10,26,"Clover Auto Parry v6.6")
+local title=text(10,26,"Clover Auto Parry v6.7")
 title.Active=true
 text(40,36,"NPCs + players · automatic learning and recording\nF7 toggles auto parry; F8 hides this panel.")
 local function button(x,y,w,caption,callback)
@@ -1312,7 +1565,7 @@ end
 button(14,128,174,"Copy logs",function()
     copyText("CLOVER AUTO PARRY v"..state.release.." | place="..tostring(game.PlaceId).." | attempts are NOT confirmed successes\n"..
         table.concat(state.logs,"\n").."\n\n"..learning:export().."\n\n"..discovery:export()..
-        "\n\nBACKGROUND AUDIT\n"..table.concat(audit.lines,"\n").."\n\n"..movement:export())
+        "\n\nBACKGROUND AUDIT\n"..table.concat(audit.lines,"\n").."\n\n"..movement:export().."\n\n"..diagnostics:export().."\nDIAGNOSTIC_ERROR="..tostring(state.diagnosticError))
 end)
 button(202,128,174,"Unload",function() state:Unload() end)
 local function startAudit()
@@ -1368,7 +1621,11 @@ connect(UIS.InputBegan, function(input, processed)
 end)
 connect(UIS.WindowFocusReleased, function() state.focused = false; movement:stop("focus lost"); stop("OFF · game lost focus") end)
 connect(UIS.WindowFocused, function() state.focused = true end)
-connect(player.CharacterRemoving, function() movement:stop("character removed"); stop("OFF · character removed") end)
+connect(player.CharacterRemoving, function()
+    diagnosticCall("life","CHARACTER_REMOVING","",{character=diagnostics.character,humanoid=diagnostics.humanoid,root=diagnostics.root})
+    movement:stop("character removed"); stop("OFF · character removed")
+end)
+if player.CharacterAdded then connect(player.CharacterAdded,function() diagnosticCall("life","CHARACTER_ADDED","") end) end
 connect(workspace.DescendantAdded, attach)
 connect(workspace.DescendantRemoving, function(object)
     local c = state.animators[object]
@@ -1376,6 +1633,9 @@ connect(workspace.DescendantRemoving, function(object)
 end)
 for _, object in ipairs(workspace:GetDescendants()) do attach(object) end
 connect(RunService.Heartbeat, function()
+    local bound,bindError=pcall(bindDiagnosticCharacter)
+    if not bound then state.diagnosticError=clean(bindError) end
+    diagnosticCall("tick",movement.mode,movement)
     movement:tick()
     flyButton.Text=movement.mode=="fly" and "Fly: ON" or "Fly: OFF"
     speedButton.Text=movement.mode=="speed" and "Speed 155: ON" or "Speed 155: OFF"
@@ -1391,7 +1651,12 @@ connect(RunService.Heartbeat, function()
             local recorded, recordError = pcall(function() discovery:tick(now) end)
             if not recorded then discovery:event("RECORDER_ERROR " .. clean(recordError)) end
         end
-        if state.held and (now >= state.releaseAt or not inputAllowed()) then release() end
+        if state.held and (now >= state.releaseAt or not inputAllowed()) then release(now>=state.releaseAt and "scheduled hold complete" or "input no longer allowed") end
+        local _,gateReason=inputAllowed()
+        if state.enabled and state.diagnosticGate~=gateReason then
+            state.diagnosticGate=gateReason
+            diagnosticCall("note","parry","INPUT_GATE "..gateReason)
+        end
         if state.testAt and now >= state.testAt then
             state.testAt = nil
             if press({ id = "TEST" }) then scheduler.nextAllowed = now + config.cooldown

@@ -54,7 +54,7 @@ end
 local nodes = {}
 local function object(class, name, parent)
     local o = { ClassName = class, Name = name or class, Parent = parent, Visible = true }
-    for _, key in ipairs({ "Activated", "InputBegan", "InputEnded", "InputChanged", "FocusLost", "AnimationPlayed" }) do o[key] = signal() end
+    for _, key in ipairs({ "Activated", "InputBegan", "InputEnded", "InputChanged", "FocusLost", "AnimationPlayed", "HealthChanged", "Died", "StateChanged", "AncestryChanged", "ChildRemoved" }) do o[key] = signal() end
     function o:IsA(c) return self.ClassName == c end
     function o:IsDescendantOf(ancestor)
         local p = self.Parent; while p do if p == ancestor then return true end; p = p.Parent end
@@ -149,6 +149,15 @@ check(ui.discovery.enabled,"F6 cannot disable background recording")
 click("Test F"); beat(.9); check(downs==0,"test input waits one second")
 beat(1); check(downs==1 and ui.held,"test sends one F")
 beat(1.13); check(not ui.held and ups==1,"test releases F")
+check(ui.diagnostics:export():find("INPUT_UP",1,true),"real input callbacks record release diagnostics")
+local localHuman=own:FindFirstChildOfClass("Humanoid")
+localHuman.Health=85; localHuman.HealthChanged:Fire(85)
+check(ui.diagnostics:export():find("source=HealthChanged",1,true),"health signal records damage correlation")
+localHuman.Died:Fire()
+check(ui.diagnostics:export():find("HUMANOID_DIED",1,true),"death signal produces independent lifecycle record")
+ownAnimator.AnimationPlayed:Fire(animation("123456"))
+check(ui.diagnostics:export():find("SELF_ANIMATION",1,true),"own animation callbacks reach outcome diagnostics")
+
 click("Auto parry")
 local tr=swing(2); tr.TimePosition=.32; beat(2.32)
 check(downs==2 and ui.enabled,"guard input still works with background audit")
@@ -169,7 +178,7 @@ tr=swing(6,"59998",otherAnimator)
 check(#ui.discovery.order==before+2,"recording continues with auto OFF")
 click("Copy logs")
 check(clipboard:find("CLOVER AUTO PARRY v6",1,true) and clipboard:find("CLOVER DISCOVERY v6",1,true)
- and clipboard:find("CLOVER MARKER LEARNING v6.6",1,true) and clipboard:find("BACKGROUND AUDIT",1,true),"one export includes attempts, learning, discovery and audit")
+ and clipboard:find("CLOVER MARKER LEARNING v6.7",1,true) and clipboard:find("BACKGROUND AUDIT",1,true) and clipboard:find("OUTCOME DIAGNOSTICS",1,true),"one export includes attempts, learning, discovery and audit")
 setclipboard=nil; click("Copy logs")
 check(ui.export and ui.export.Text,"clipboard fallback remains available")
 ui.export.FocusLost:Fire(); setclipboard=function(v) clipboard=v end
@@ -185,6 +194,9 @@ click("Auto parry"); tr=swing(10); tr.TimePosition=.32; beat(10.32)
 throwUp=true; ui:Unload()
 check(ui.held and ui.alive,"failed release retains unload controls")
 throwUp=false; ui:Unload(); check(not ui.alive and not ui.held,"unload cleans input after backend recovery")
+local priorLifecycle=#ui.diagnostics.lifecycle
+localHuman.Died:Fire()
+check(#ui.diagnostics.lifecycle==priorLifecycle and #ui.diagnostics.connections==0,"unload disconnects diagnostic character listeners")
 
 -- Observe real delivered-file callbacks against combat/execution registry mocks.
 local rs=object("ReplicatedStorage","ReplicatedStorage"); services.ReplicatedStorage=rs

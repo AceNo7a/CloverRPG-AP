@@ -8,6 +8,18 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/AceNo7a/CloverRPG-AP/
 
 The GUI has six controls: **Auto parry**, **Test F**, **Copy logs**, **Unload**, **Fly**, and **Speed 155**. F7 toggles auto parry; F8 hides the panel. There are no target, distance, delay, learning or audit settings. All nearby NPCs and players are eligible targets. Losing focus or respawning turns automatic input OFF while background features continue. Unload stops the script and its background work.
 
+## Reset and parry diagnostics (v6.7)
+
+Copy logs now includes **OUTCOME DIAGNOSTICS**, separate from the existing discovery/audit buffers. Lifecycle events (160 entries), last-flight samples (160 at up to4/second), and parry observations (300 entries) each show their own overwritten count. Starting another flight replaces its sample trace; existing lifecycle start/stop records remain. Copy immediately after a failure, before rerunning/unloading.
+
+Flight snapshots include health/state, position/velocity, root/character ancestry, anchoring, PlatformStand/AutoRotate, owned constraint presence/requested velocity, world destruction height, focus and network ping. Direct death, nonpositive-health, state, ancestry, character-added/removing and constraint-removal signals help distinguish death from character/root replacement. They cannot reveal a private server reset reason or prove anti-cheat enforcement.
+
+Each automatic F attempt receives an ID. Logs record input API success/error, actual F-up time/hold duration, animation position/speed and threshold lateness, distance/range, facing dot products, equipped tool, selected numeric/boolean combat attributes, and up to six playing local animation IDs. Follow-up snapshots target50/150/300/600ms and include actual elapsed time. Local animation and damage events correlate with up to four attempts from the previous1.25seconds, explicitly as temporal associations. Positive facing dot means broadly facing the other root; it is not a hitbox or acceptance test. HealthChanged is used where available with polling fallback. Input gates and scheduler skips retain reasons. No remote hooks or server-event interception are added.
+
+Verification: 18 diagnostic +105 integration +25 movement assertions passed. Timings, ranges, speed, flight behavior and candidate reporting remain unchanged. Diagnostic records stay in Copy logs and are never sent to Discord.
+
+Test flight once with Auto parry and Speed OFF, then copy logs immediately after any reset. For a separate parry test, leave Fly/Speed OFF, equip the weapon you normally parry with, face one attacker and enable Auto parry while focused. Record a short encounter, wait one second after the last attack, then copy logs with matching video. Avoid Test F during this encounter because it switches Auto parry OFF.
+
 ## Optional movement (v6.6)
 
 Fly and Speed start OFF and are mutually exclusive. Fly uses camera-relative WASD, E up and Q down at 32 studs/second; typing holds the flight actuator at zero velocity. It uses a local [LinearVelocity constraint](https://create.roblox.com/docs/physics/constraints/linear-velocity) and temporarily changes PlatformStand/AutoRotate. It retains collisions. Switching off removes owned objects and restores owned character settings. Flight stops if the game replaces its humanoid state; it does not continually force that state back.
@@ -79,5 +91,6 @@ lua tests/timing_audit_checks.lua clover_auto_parry.lua
 lua tests/profile_support_checks.lua clover_auto_parry.lua
 lua tests/asset_marker_checks.lua clover_auto_parry.lua
 lua tests/movement_checks.lua clover_auto_parry.lua
+lua tests/outcome_diagnostics_checks.lua clover_auto_parry.lua
 node relay/checks.mjs
 ```
