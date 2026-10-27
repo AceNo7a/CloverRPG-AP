@@ -1,4 +1,4 @@
--- Clover auto parry v6.3: validated asset-marker fallback and bounded wolf reach.
+-- Clover auto parry v6.5: reviewed learned/asset bundles with separate discovery reporting.
 -- Run this entire file. Starts OFF. No remote hooks or packet replay.
 -- Automatic reporting sends numeric timing candidates only; no remote code is fetched.
 -- Manual F timings are starting estimates, not measured server parry windows.
@@ -239,7 +239,8 @@ local function newProfileSupport(options)
             if allowed(id) and qualifies and row.status=="ready" then
                 local key=asset and ("asset:"..math.floor(row.position*100+.5)..":"..math.floor(row.length*100+.5)) or self:fingerprint(row)
                 local sent=asset and self.assetSent or self.sent
-                if sent[id]~=key then
+                local known=options.knownFingerprint and options.knownFingerprint(kind,id)
+                if sent[id]~=key and known~=key then
                     out[#out+1]=asset and {id=id,marker=row.position,length=row.length,provider=row.provider}
                         or {id=id,marker=row.position,spread=row.spread,samples=#row.samples}
                     keys[id]=key
@@ -408,15 +409,55 @@ local options = type(env.CloverParryOptions)=="table" and env.CloverParryOptions
 -- Reviewed from the supplied 2026-10-27 capture. Marker positions, not parry windows.
 -- Maintainers add reviewed Discord candidates here and release a new GitHub revision.
 local bundledProfiles = {
-    ["10017994824"] = .5874996781,
-    ["107811934597910"] = .4208331704,
-    ["122307357536158"] = .4541664422,
-    ["74594683886829"] = .4374997914,
-    ["85853530330509"] = .4170830846,
-    ["86722279259826"] = .5041664243,
-    ["99787918237880"] = .3874998391,
+    ["10017994824"] = 0.5874996781349182,
+    ["10250846568"] = 0.22083328664302826,
+    ["107811934597910"] = 0.42083311080932617,
+    ["111510911006717"] = 0.4195835590362549,
+    ["122307357536158"] = 0.454166442155838,
+    ["123693468061117"] = 0.3522917926311493,
+    ["125957249913572"] = 0.8999993801116943,
+    ["73629219095110"] = 0.8624993562698364,
+    ["74594683886829"] = 0.4374997914,
+    ["75088128678260"] = 0.7874994874000549,
+    ["85570415456598"] = 0.3681251108646393,
+    ["85853530330509"] = 0.41708314418792725,
+    ["86722279259826"] = 0.5041663646697998,
+    ["89652204450491"] = 0.42083314061164856,
+    ["89849437438829"] = 0.454166442155838,
+    ["99787918237880"] = 0.3874998092651367,
+}
+local bundledAssetProfiles = {
+    ["10017994824"] = {position=0.5833333134651184,length=0.7166666388511658,provider="AnimationClipProvider"},
+    ["10250846568"] = {position=0.21666666865348816,length=0.28333333134651184,provider="AnimationClipProvider"},
+    ["107811934597910"] = {position=0.4166666567325592,length=0.8999999761581421,provider="AnimationClipProvider"},
+    ["111510911006717"] = {position=0.4166666567325592,length=0.6166666746139526,provider="AnimationClipProvider"},
+    ["122307357536158"] = {position=0.44999998807907104,length=0.8999999761581421,provider="AnimationClipProvider"},
+    ["123693468061117"] = {position=0.3499999940395355,length=0.5166666507720947,provider="AnimationClipProvider"},
+    ["124572427631698"] = {position=0.9579166769981384,length=1.7333333492279053,provider="AnimationClipProvider"},
+    ["125957249913572"] = {position=0.8966666460037231,length=1.2333333492279053,provider="AnimationClipProvider"},
+    ["16434619660"] = {position=0.46666666865348816,length=0.9166666865348816,provider="AnimationClipProvider"},
+    ["73629219095110"] = {position=0.8620833158493042,length=1.2999999523162842,provider="AnimationClipProvider"},
+    ["73807165586659"] = {position=1.003749966621399,length=1.6666666269302368,provider="AnimationClipProvider"},
+    ["74594683886829"] = {position=0.4333333373069763,length=0.8999999761581421,provider="AnimationClipProvider"},
+    ["75088128678260"] = {position=0.7833333611488342,length=1.1333333253860474,provider="AnimationClipProvider"},
+    ["75695780896011"] = {position=0.5,length=0.8833333253860474,provider="AnimationClipProvider"},
+    ["85570415456598"] = {position=0.36666667461395264,length=0.4833333194255829,provider="AnimationClipProvider"},
+    ["85853530330509"] = {position=0.4166666567325592,length=0.6166666746139526,provider="AnimationClipProvider"},
+    ["86722279259826"] = {position=0.5,length=0.949999988079071,provider="AnimationClipProvider"},
+    ["89652204450491"] = {position=0.4166666567325592,length=0.8999999761581421,provider="AnimationClipProvider"},
+    ["89849437438829"] = {position=0.44999998807907104,length=0.9166666865348816,provider="AnimationClipProvider"},
+    ["99787918237880"] = {position=0.38333332538604736,length=0.6000000238418579,provider="AnimationClipProvider"},
 }
 -- No webhook token belongs in this distributed file.
+local function bundledEnabled()
+    return options.useBundledProfiles~=false and game.PlaceId==8248288152 and game.PlaceVersion==68598
+end
+local function bundledFingerprint(kind,id)
+    if not bundledEnabled() then return nil end
+    if kind=="learned" and bundledProfiles[id] then return "ready:"..math.floor(bundledProfiles[id]*100+.5) end
+    local row=kind=="asset" and bundledAssetProfiles[id]
+    if row then return "asset:"..math.floor(row.position*100+.5)..":"..math.floor(row.length*100+.5) end
+end
 local PUBLIC_REPORT_URL = "https://clover-timing-relay.indigoamber16384.chatgpt.site/report"
 
 if env.CloverAutoParry then
@@ -451,7 +492,7 @@ local auditSeeds = { "86722279259826", "107811934597910", "122307357536158", "99
     "10017994824", "9839904022", "10017151218", "10036138066", "10028752861", "10059485766" }
 local order = { "86722279259826", "107811934597910", "122307357536158", "99787918237880" }
 local config = { radius = 8, cooldown = 0.7, hold = 0.12, offset = 0, guardsOnly = false, heavyTrial = false }
-local state = { version = 6, release = "6.4", alive = true, enabled = false, focused = true, connections = {}, animators = {},
+local state = { version = 6, release = "6.5", alive = true, enabled = false, focused = true, connections = {}, animators = {},
     logs = {}, attempts = 0, detected = 0, held = false, releaseAt = 0, testAt = nil }
 env.CloverAutoParry = state
 local scheduler = newScheduler()
@@ -490,6 +531,7 @@ if reportUrl=="" and http and type(read)=="function" then
 end
 local cachePath="clover_timings_v5_"..tostring(game.PlaceId)..".json"
 local storage=newProfileSupport({place=game.PlaceId,placeVersion=game.PlaceVersion or 0,time=os.time,assets=learning.assets,
+    knownFingerprint=bundledFingerprint,
     alive=function() return state.alive end,
     spawn=task and task.spawn,
     read=type(read)=="function" and function() return read(cachePath) end or nil,
@@ -763,8 +805,10 @@ function learning:position(id)
     if row then return self.model:position(id),"learned" end
     local asset=self.assets[id]
     if asset and asset.status=="ready" then return asset.position,"asset marker" end
-    if options.useBundledProfiles~=false and game.PlaceId==8248288152 and game.PlaceVersion==68598 then
-        return bundledProfiles[id],"bundled candidate"
+    if bundledEnabled() then
+        if bundledProfiles[id] then return bundledProfiles[id],"bundled candidate" end
+        local candidate=bundledAssetProfiles[id]
+        if candidate then return candidate.position,"bundled asset marker" end
     end
 end
 function learning:sample(id,position,multiple)
@@ -894,7 +938,7 @@ function learning:tick(now)
 end
 function learning:export()
     for track,item in pairs(self.active) do self:trace("TRACK_AT_EXPORT",track,item) end
-    local lines={"CLOVER MARKER LEARNING v6.4 | place="..game.PlaceId,
+    local lines={"CLOVER MARKER LEARNING v6.5 | place="..game.PlaceId,
         "Accepted names: HitWindow, Attack. Movement and executions remain excluded.",
         "Ready = consistent marker position; NOT confirmed parry success. First encounters are not protected by learning.",
         "lead_seconds="..self.lead.." enabled="..tostring(self.enabled).." skipped_tracks="..self.skipped.." overwritten_diagnostics="..self.overwritten,
@@ -906,6 +950,12 @@ function learning:export()
         local active,origin=self:position(id)
         if active and origin=="bundled candidate" then
             lines[#lines+1]="BUNDLED id="..id.." marker="..position.." source=2026-10-27 capture; success unverified"
+        end
+    end
+    for id,row in pairs(bundledAssetProfiles) do
+        local active,origin=self:position(id)
+        if active and origin=="bundled asset marker" then
+            lines[#lines+1]="BUNDLED_ASSET id="..id.." marker="..row.position.." length="..row.length.." provider="..row.provider.." success=unverified"
         end
     end
     local ids={}; for id in pairs(self.model.rows) do ids[#ids+1]=id end; table.sort(ids)
@@ -1068,7 +1118,7 @@ local function text(y, h, value)
         BackgroundTransparency = 1, Text = value, TextColor3 = Color3.fromRGB(226, 232, 245),
         Font = Enum.Font.Gotham, TextSize = 13, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left })
 end
-local title=text(10,26,"Clover Auto Parry v6.4")
+local title=text(10,26,"Clover Auto Parry v6.5")
 title.Active=true
 text(40,36,"NPCs + players · automatic learning and recording\nF7 toggles auto parry; F8 hides this panel.")
 local function button(x,y,w,caption,callback)

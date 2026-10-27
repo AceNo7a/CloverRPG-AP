@@ -1,0 +1,206 @@
+{
+  "place": 8248288152,
+  "placeVersion": 68598,
+  "reviewed": "2026-10-27",
+  "evidence": "Marker timing candidates; parry success unverified",
+  "learned": {
+    "123693468061117": {
+      "marker": 0.3522917926311493,
+      "samples": 5,
+      "spread": 0.003958344459533691,
+      "provenance": "2026-10-27 completed playback capture/cache"
+    },
+    "111510911006717": {
+      "marker": 0.4195835590362549,
+      "samples": 4,
+      "spread": 0.003958463668823242,
+      "provenance": "2026-10-27 completed playback capture/cache"
+    },
+    "89849437438829": {
+      "marker": 0.454166442155838,
+      "samples": 2,
+      "spread": 2.9802322387695312e-08,
+      "provenance": "2026-10-27 completed playback capture/cache"
+    },
+    "89652204450491": {
+      "marker": 0.42083314061164856,
+      "samples": 2,
+      "spread": 0.004166722297668457,
+      "provenance": "2026-10-27 completed playback capture/cache"
+    },
+    "10250846568": {
+      "marker": 0.22083328664302826,
+      "samples": 4,
+      "spread": 0.004166692495346069,
+      "provenance": "2026-10-27 completed playback capture/cache"
+    },
+    "85570415456598": {
+      "marker": 0.3681251108646393,
+      "samples": 3,
+      "spread": 2.086162567138672e-07,
+      "provenance": "2026-10-27 completed playback capture/cache"
+    },
+    "107811934597910": {
+      "marker": 0.42083311080932617,
+      "samples": 4,
+      "spread": 5.960464477539063e-08,
+      "provenance": "2026-10-27 completed playback capture/cache"
+    },
+    "75088128678260": {
+      "marker": 0.7874994874000549,
+      "samples": 5,
+      "spread": 0.0,
+      "provenance": "2026-10-27 completed playback capture/cache"
+    },
+    "125957249913572": {
+      "marker": 0.8999993801116943,
+      "samples": 5,
+      "spread": 5.960464477539063e-08,
+      "provenance": "2026-10-27 completed playback capture/cache"
+    },
+    "10017994824": {
+      "marker": 0.5874996781349182,
+      "samples": 5,
+      "spread": 0.004166722297668457,
+      "provenance": "2026-10-27 completed playback capture/cache"
+    },
+    "85853530330509": {
+      "marker": 0.41708314418792725,
+      "samples": 5,
+      "spread": 0.005416661500930786,
+      "provenance": "2026-10-27 completed playback capture/cache"
+    },
+    "122307357536158": {
+      "marker": 0.454166442155838,
+      "samples": 2,
+      "spread": 0.004166692495346069,
+      "provenance": "2026-10-27 completed playback capture/cache"
+    },
+    "86722279259826": {
+      "marker": 0.5041663646697998,
+      "samples": 4,
+      "spread": 5.960464477539063e-08,
+      "provenance": "2026-10-27 completed playback capture/cache"
+    },
+    "73629219095110": {
+      "marker": 0.8624993562698364,
+      "samples": 3,
+      "spread": 5.960464477539063e-08,
+      "provenance": "2026-10-27 completed playback capture/cache"
+    },
+    "99787918237880": {
+      "marker": 0.3874998092651367,
+      "samples": 5,
+      "spread": 0.003958344459533691,
+      "provenance": "2026-10-27 completed playback capture/cache"
+    },
+    "74594683886829": {
+      "marker": 0.4374997914,
+      "samples": 2,
+      "spread": 5.960464477539063e-08,
+      "provenance": "previously reviewed 2026-10-27 capture; retained"
+    }
+  },
+  "assets": {
+    "75695780896011": {
+      "marker": 0.5,
+      "length": 0.8833333253860474,
+      "provider": "AnimationClipProvider"
+    },
+    "73807165586659": {
+      "marker": 1.003749966621399,
+      "length": 1.6666666269302368,
+      "provider": "AnimationClipProvider"
+    },
+    "99787918237880": {
+      "marker": 0.38333332538604736,
+      "length": 0.6000000238418579,
+      "provider": "AnimationClipProvider"
+    },
+    "124572427631698": {
+      "marker": 0.9579166769981384,
+      "length": 1.7333333492279053,
+      "provider": "AnimationClipProvider"
+    },
+    "111510911006717": {
+      "marker": 0.4166666567325592,
+      "length": 0.6166666746139526,
+      "provider": "AnimationClipProvider"
+    },
+    "89849437438829": {
+      "marker": 0.44999998807907104,
+      "length": 0.9166666865348816,
+      "provider": "AnimationClipProvider"
+    },
+    "89652204450491": {
+      "marker": 0.4166666567325592,
+      "length": 0.8999999761581421,
+      "provider": "AnimationClipProvider"
+    },
+    "10250846568": {
+      "marker": 0.21666666865348816,
+      "length": 0.28333333134651184,
+      "provider": "AnimationClipProvider"
+    },
+    "16434619660": {
+      "marker": 0.46666666865348816,
+      "length": 0.9166666865348816,
+      "provider": "AnimationClipProvider"
+    },
+    "85570415456598": {
+      "marker": 0.36666667461395264,
+      "length": 0.4833333194255829,
+      "provider": "AnimationClipProvider"
+    },
+    "107811934597910": {
+      "marker": 0.4166666567325592,
+      "length": 0.8999999761581421,
+      "provider": "AnimationClipProvider"
+    },
+    "75088128678260": {
+      "marker": 0.7833333611488342,
+      "length": 1.1333333253860474,
+      "provider": "AnimationClipProvider"
+    },
+    "125957249913572": {
+      "marker": 0.8966666460037231,
+      "length": 1.2333333492279053,
+      "provider": "AnimationClipProvider"
+    },
+    "10017994824": {
+      "marker": 0.5833333134651184,
+      "length": 0.7166666388511658,
+      "provider": "AnimationClipProvider"
+    },
+    "122307357536158": {
+      "marker": 0.44999998807907104,
+      "length": 0.8999999761581421,
+      "provider": "AnimationClipProvider"
+    },
+    "74594683886829": {
+      "marker": 0.4333333373069763,
+      "length": 0.8999999761581421,
+      "provider": "AnimationClipProvider"
+    },
+    "86722279259826": {
+      "marker": 0.5,
+      "length": 0.949999988079071,
+      "provider": "AnimationClipProvider"
+    },
+    "73629219095110": {
+      "marker": 0.8620833158493042,
+      "length": 1.2999999523162842,
+      "provider": "AnimationClipProvider"
+    },
+    "85853530330509": {
+      "marker": 0.4166666567325592,
+      "length": 0.6166666746139526,
+      "provider": "AnimationClipProvider"
+    },
+    "123693468061117": {
+      "marker": 0.3499999940395355,
+      "length": 0.5166666507720947,
+      "provider": "AnimationClipProvider"
+    }
+  }
+}

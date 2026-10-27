@@ -89,4 +89,13 @@ check(invalid:restore(cache,{},now),'old learned-only cache remains compatible')
 options.send=function() return 429,180 end
 local retryAssets=newStore(options);retryAssets.enabled=true;retryAssets:tick(0,{},function() return true end)
 check(not next(retryAssets.assetSent) and retryAssets.nextReport==180,'failed asset report remains pending with backoff')
+options.knownFingerprint=function(kind,id) if id=='10' then return kind=='asset' and 'asset:40:170' or 'ready:40' end end
+local known=newStore(options);local knownRows={['10']={status='ready',position=.4,spread=0,samples={.4,.4}}}
+check(#known:batch(knownRows,function() return true end).profiles==0 and #known:batch({},function() return true end,'asset').profiles==0,'bundled learned and asset values are not resubmitted as new discoveries')
+knownRows['10'].position=.44
+check(#known:batch(knownRows,function() return true end).profiles==1,'changed learned timing remains reportable')
+known.assets['10'].position=.45
+check(#known:batch({},function() return true end,'asset').profiles==1,'changed asset timing remains reportable')
+knownRows['99']={status='ready',position=.5,spread=0,samples={.5,.5}}
+check(#known:batch(knownRows,function() return true end).profiles==2,'new IDs remain reportable alongside changed bundled IDs')
 print('PASS: '..n..' persistence/reporting assertions.')
