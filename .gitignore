@@ -1,0 +1,6 @@
+clover_private_reporting.json
+clover_timings_v5_*.json
+.dev.vars*
+.env*
+.wrangler/
+node_modules/

@@ -1,0 +1,11 @@
+{
+  "name": "clover-timing-reports",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-27",
+  "observability": { "enabled": false },
+  "ratelimits": [{
+    "name": "REPORT_LIMITER",
+    "namespace_id": "8248288152",
+    "simple": { "limit": 15, "period": 60 }
+  }]
+}
