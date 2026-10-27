@@ -1,4 +1,4 @@
--- Clover auto parry v6.2: bounded combat-track diagnostics and HitWindow/Attack learning.
+-- Clover auto parry v6.3: validated asset-marker fallback and bounded wolf reach.
 -- Run this entire file. Starts OFF. No remote hooks or packet replay.
 -- Automatic reporting sends numeric timing candidates only; no remote code is fetched.
 -- Manual F timings are starting estimates, not measured server parry windows.
@@ -42,6 +42,46 @@ local function newScheduler()
     return s
 end
 -- END TESTABLE CORE
+
+-- BEGIN TESTABLE ASSET MARKERS
+local function validatedAssetMarker(clip)
+    if not clip:IsA("KeyframeSequence") or clip.Loop then return nil,"unsupported or looping clip" end
+    local frames=clip:GetKeyframes()
+    if #frames==0 or #frames>500 then return nil,"empty or oversized clip" end
+    local events,length={},0
+    for _,frame in ipairs(frames) do
+        local t=frame.Time
+        if type(t)~="number" or t~=t or t<0 or t>60 then return nil,"invalid frame time" end
+        length=math.max(length,t)
+        local markers=frame:GetMarkers()
+        if #markers>64 then return nil,"marker limit" end
+        for _,marker in ipairs(markers) do
+            if marker.Name=="Attack" or marker.Name=="HitWindow" then events[#events+1]={time=t,key="marker:"..marker.Name} end
+        end
+        if frame.Name=="Attack" or frame.Name=="HitWindow" then events[#events+1]={time=t,key="keyframe:"..frame.Name} end
+    end
+    if #events==0 then return nil,"no timing marker" end
+    table.sort(events,function(a,b) return a.time<b.time end)
+    local first,seen=events[1],{}
+    if first.time<.03 or first.time>8 or first.time>=length then return nil,"invalid timing position" end
+    for _,e in ipairs(events) do
+        if seen[e.key] or math.abs(e.time-first.time)>.025 then return nil,"multiple timing markers" end
+        seen[e.key]=true
+    end
+    return first.time,nil,length
+end
+local function fetchUsableClip(id,primary,fallback)
+    local ok,clip=pcall(primary,id)
+    if ok and clip then
+        local usable,valid=pcall(function() return clip:IsA("KeyframeSequence") and #clip:GetKeyframes()>0 end)
+        -- Providers can return the same cached Instance on every call. Never destroy it.
+        if usable and valid then return clip:Clone(),"AnimationClipProvider" end
+    end
+    local good,sequence=pcall(fallback,id)
+    if good and sequence then return sequence:Clone(),"KeyframeSequenceProvider" end
+    error("Clip unavailable; fallback="..tostring(sequence))
+end
+-- END TESTABLE ASSET MARKERS
 
 -- BEGIN TESTABLE LEARNING
 local function classifyAnimationPaths(paths)
@@ -377,7 +417,7 @@ local auditSeeds = { "86722279259826", "107811934597910", "122307357536158", "99
     "10017994824", "9839904022", "10017151218", "10036138066", "10028752861", "10059485766" }
 local order = { "86722279259826", "107811934597910", "122307357536158", "99787918237880" }
 local config = { radius = 8, cooldown = 0.7, hold = 0.12, offset = 0, guardsOnly = false, heavyTrial = false }
-local state = { version = 6, release = "6.2", alive = true, enabled = false, focused = true, connections = {}, animators = {},
+local state = { version = 6, release = "6.3", alive = true, enabled = false, focused = true, connections = {}, animators = {},
     logs = {}, attempts = 0, detected = 0, held = false, releaseAt = 0, testAt = nil }
 env.CloverAutoParry = state
 local scheduler = newScheduler()
@@ -394,6 +434,7 @@ if not env.__CloverHitWindowV4 or env.__CloverHitWindowV4.session ~= sessionKey 
 end
 local learning = { enabled = true, lead = .12, radius = 40, active = {}, activeCount = 0,
     paths = {}, registryComplete = false, nextRefresh = 0, logs = {}, skipped = 0, serial = 0, overwritten = 0,
+    assets = {}, assetCount = 0, assetBusy = 0, assetQueue = {},
     model = newHitWindowModel(env.__CloverHitWindowV4.rows) }
 state.learning = learning
 local httpOK,http=pcall(function() return game:GetService("HttpService") end)
@@ -590,11 +631,16 @@ local function distance(actor)
     if not a or not b then return math.huge end
     return (a.Position - b.Position).Magnitude
 end
+local wolfIds={['125957249913572']=true,['73629219095110']=true,['124572427631698']=true,['73807165586659']=true}
+local function attackRange(item)
+    if wolfIds[item.id] and item.actor and item.actor.Name=="Wolf" and not Players:GetPlayerFromCharacter(item.actor) then return 12 end
+    return config.radius
+end
 scheduler.onSkip=function(item,reason)
     local detail=""
     local ok,value=pcall(function()
         return string.format(" distance=%.2f range=%.2f pos=%.4f speed=%.3f",distance(item.actor),
-            config.radius,item.track.TimePosition,item.track.Speed)
+            attackRange(item),item.track.TimePosition,item.track.Speed)
     end)
     detail=ok and value or " distance=unavailable track=unavailable"
     log("SKIP id="..item.id.." reason="..reason..detail)
@@ -643,10 +689,44 @@ function learning:allowed(id)
     if attacks[id] then return true, "existing guard mapping" end
     return false, "no recognized combat path"
 end
+local function fetchAnimationClip(id)
+    return fetchUsableClip(id,
+        function(key) return game:GetService("AnimationClipProvider"):GetAnimationClipAsync("rbxassetid://"..key) end,
+        function(key) return game:GetService("KeyframeSequenceProvider"):GetKeyframeSequenceAsync("rbxassetid://"..key) end)
+end
+function learning:requestAsset(id)
+    if self.assets[id] or self.assetCount>=32 or not self:allowed(id) then return end
+    self.assetCount=self.assetCount+1; self.assets[id]={status="queued"}; self.assetQueue[#self.assetQueue+1]=id
+end
+function learning:fetchAssets()
+    if not task or type(task.spawn)~="function" then return end
+    while self.assetBusy<2 and #self.assetQueue>0 do
+        local id=table.remove(self.assetQueue,1)
+        self.assetBusy=self.assetBusy+1; self.assets[id].status="loading"
+        task.spawn(function()
+            local clip
+            local ok,position,reason,length,provider=pcall(function()
+                local source; clip,source=fetchAnimationClip(id)
+                local pos,why,duration=validatedAssetMarker(clip)
+                return pos,why,duration,source
+            end)
+            if clip then pcall(function() clip:Destroy() end) end
+            self.assetBusy=self.assetBusy-1
+            if not state.alive then return end
+            local row=self.assets[id]
+            row.status=ok and position and "ready" or "unavailable"
+            row.position=ok and position or nil; row.length=length; row.provider=provider
+            row.reason=ok and (reason or "validated asset marker") or clean(position)
+            self:note("ASSET_TIMING id="..id.." status="..row.status.." position="..tostring(row.position).." provider="..tostring(provider).." reason="..tostring(row.reason))
+        end)
+    end
+end
 function learning:position(id)
     if not self.enabled or not self:allowed(id) then return nil end
     local row=self.model.rows[id]
     if row then return self.model:position(id),"learned" end
+    local asset=self.assets[id]
+    if asset and asset.status=="ready" then return asset.position,"asset marker" end
     if options.useBundledProfiles~=false and game.PlaceId==8248288152 and game.PlaceVersion==68598 then
         return bundledProfiles[id],"bundled candidate"
     end
@@ -674,6 +754,7 @@ function learning:observe(actor, track, id)
     local humanoid=actor:FindFirstChildOfClass("Humanoid")
     if humanoid and humanoid.Health <= 0 then return end
     if not self:allowed(id) then return end
+    self:requestAsset(id)
     if not tostring(track.Priority):find("Action",1,true) or track.TimePosition > .05 then
         self:note("OBSERVE_SKIP id="..id.." reason=priority_or_late_start priority="..clean(track.Priority).." pos="..track.TimePosition); return
     end
@@ -748,6 +829,7 @@ end
 local diagnosticCheckpoints={.25,1.25,3}
 function learning:tick(now)
     if now >= self.nextRefresh then self:refresh() end
+    self:fetchAssets()
     local remove={}
     for track,item in pairs(self.active) do
         local ok, expired=pcall(function()
@@ -776,11 +858,14 @@ function learning:tick(now)
 end
 function learning:export()
     for track,item in pairs(self.active) do self:trace("TRACK_AT_EXPORT",track,item) end
-    local lines={"CLOVER MARKER LEARNING v6.2 | place="..game.PlaceId,
+    local lines={"CLOVER MARKER LEARNING v6.3 | place="..game.PlaceId,
         "Accepted names: HitWindow, Attack. Movement and executions remain excluded.",
         "Ready = consistent marker position; NOT confirmed parry success. First encounters are not protected by learning.",
         "lead_seconds="..self.lead.." enabled="..tostring(self.enabled).." skipped_tracks="..self.skipped.." overwritten_diagnostics="..self.overwritten,
         self.registryStatus or "Registry not checked",storage.diskStatus.." | "..storage.status}
+    for id,row in pairs(self.assets) do
+        lines[#lines+1]="ASSET_PROFILE id="..id.." status="..row.status.." marker="..tostring(row.position).." length="..tostring(row.length).." provider="..tostring(row.provider).." reason="..tostring(row.reason)
+    end
     for id,position in pairs(bundledProfiles) do
         local active,origin=self:position(id)
         if active and origin=="bundled candidate" then
@@ -797,6 +882,7 @@ function learning:export()
     return table.concat(lines,"\n")
 end
 learning:refresh()
+for id in pairs(wolfIds) do learning:requestAsset(id) end
 local markerProbes = { "HitWindow", "AnimationEnd", "Hit", "hit", "Damage", "damage", "Hitbox", "Attack", "Impact", "Parry" }
 function discovery:observe(actor, track, id)
     if not self.enabled or not actor or actor == player.Character or not id then return end
@@ -946,7 +1032,7 @@ local function text(y, h, value)
         BackgroundTransparency = 1, Text = value, TextColor3 = Color3.fromRGB(226, 232, 245),
         Font = Enum.Font.Gotham, TextSize = 13, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left })
 end
-local title=text(10,26,"Clover Auto Parry v6.2")
+local title=text(10,26,"Clover Auto Parry v6.3")
 title.Active=true
 text(40,36,"NPCs + players · automatic learning and recording\nF7 toggles auto parry; F8 hides this panel.")
 local function button(x,y,w,caption,callback)
@@ -961,7 +1047,7 @@ local function switch()
 end
 toggle=button(14,88,174,"Auto parry: OFF",switch)
 button(202,88,174,"Test F (1 second)",function()
-    stop("Test scheduled: return focus to the game")
+    stop("Test scheduled · auto OFF: return focus to the game")
     state.testAt=math.max(os.clock()+1,scheduler.nextAllowed)
 end)
 statusLabel=text(166,38,"OFF · use Test F first")
@@ -1010,13 +1096,7 @@ local function startAudit()
         local fetched, result = pcall(function()
             return runTimingAudit({ roots = roots, ids = ids, alive = current,
                 pause = function() task.wait() end,
-                fetch = function(id)
-                    local ok, clip = pcall(function() return game:GetService("AnimationClipProvider"):GetAnimationClipAsync("rbxassetid://" .. id) end)
-                    if ok then return clip end
-                    local fallback, sequence = pcall(function() return game:GetService("KeyframeSequenceProvider"):GetKeyframeSequenceAsync("rbxassetid://" .. id) end)
-                    if fallback then return sequence end
-                    error("ClipProvider: " .. tostring(clip) .. " | SequenceProvider: " .. tostring(sequence))
-                end })
+                fetch = fetchAnimationClip })
         end)
         if not current() then return end
         audit.running = false
@@ -1087,7 +1167,7 @@ connect(RunService.Heartbeat, function()
                         if observation and (observation.invalid or observation.multiple) then validLearning=false end
                     end
                     return validLearning and learning:allowed(item.id) and eligible(item.actor) and track.IsPlaying and not track.Looped,
-                        track.TimePosition, track.Speed, distance(item.actor) <= config.radius
+                        track.TimePosition, track.Speed, distance(item.actor) <= attackRange(item)
                 end)
                 if not good then return false, 0, 0, false end
                 return valid, position, speed, inRange
@@ -1104,8 +1184,10 @@ connect(RunService.Heartbeat, function()
             local position,origin=learning:position(id)
             if position and origin=="bundled candidate" then bundled=bundled+1 end
         end
-        learningStats.Text=string.format("Learned %d · bundled %d · collecting %d · recorded %d",
-            ready,bundled,collecting,#discovery.events)
+        local assetReady=0
+        for id,row in pairs(learning.assets) do if row.status=="ready" and learning:allowed(id) then assetReady=assetReady+1 end end
+        learningStats.Text=string.format("Learned %d · assets %d · collecting %d · recorded %d",
+            ready,assetReady,collecting,#discovery.events)
     end)
     if not ok then stop("Runtime error: " .. tostring(err)) end
 end)

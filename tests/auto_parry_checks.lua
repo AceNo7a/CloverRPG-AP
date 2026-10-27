@@ -169,7 +169,7 @@ tr=swing(6,"59998",otherAnimator)
 check(#ui.discovery.order==before+2,"recording continues with auto OFF")
 click("Copy logs")
 check(clipboard:find("CLOVER AUTO PARRY v6",1,true) and clipboard:find("CLOVER DISCOVERY v6",1,true)
- and clipboard:find("CLOVER MARKER LEARNING v6.2",1,true) and clipboard:find("BACKGROUND AUDIT",1,true),"one export includes attempts, learning, discovery and audit")
+ and clipboard:find("CLOVER MARKER LEARNING v6.3",1,true) and clipboard:find("BACKGROUND AUDIT",1,true),"one export includes attempts, learning, discovery and audit")
 setclipboard=nil; click("Copy logs")
 check(ui.export and ui.export.Text,"clipboard fallback remains available")
 ui.export.FocusLost:Fire(); setclipboard=function(v) clipboard=v end
@@ -340,5 +340,30 @@ local late=animation("61001"); late.TimePosition=.2; otherAnimator.AnimationPlay
 check(logs():find("reason=priority_or_late_start",1,true),"late learner attachment rejection is explicit")
 for i=1,305 do learner:note("bounded diagnostic "..i) end
 check(#learner.logs==300 and learner.overwritten>=5,"diagnostics remain bounded and count overwritten lines")
+ui:Unload()
+game.JobId="asset-fallback-test"; now=600; dofile(path); ui=environment.CloverAutoParry; learner=ui.learning
+learner.assetQueue={}
+learner.assets['124572427631698']={status='ready',position=.957916677,length=1.7333333}
+learner.assets['73807165586659']={status='ready',position=1.003749967,length=1.6666667}
+check(select(2,learner:position('124572427631698'))=='asset marker',"asset marker provenance is separate from live learning")
+local oldName=another.Name; another.Name='Wolf'
+-- another is a Player's rig: never give it the NPC allowance.
+another:FindFirstChild('HumanoidRootPart').Position=position(9.63)
+baseAttack=downs; click('Auto parry')
+tr=swing(601,'124572427631698',otherAnimator); tr.TimePosition=.85; beat(601.85)
+check(downs==baseAttack and ui.status:find('range=8.00',1,true),"players do not inherit wolf range")
+another.Name=oldName; another:FindFirstChild('HumanoidRootPart').Position=position(4)
+local wolf,wa=rig('Wolf',9.63); workspace.DescendantAdded:Fire(wa)
+tr=swing(603,'124572427631698',wa); tr.Length=0; tr.TimePosition=.85; beat(603.85)
+check(downs==baseAttack+1 and ui.status:find('source=asset marker',1,true),"zero-length NPC playback can use verified asset marker at captured 9.63-stud distance")
+beat(604)
+wolf:FindFirstChild('HumanoidRootPart').Position=position(12.1)
+tr=swing(605,'73807165586659',wa); tr.Speed=1.1; tr.TimePosition=.88; beat(605.8)
+check(downs==baseAttack+1 and ui.status:find('range=12.00',1,true),"wolf allowance remains bounded at twelve studs")
+learner.assets['60002']={status='ready',position=.4}; learner.assets['60003']={status='ready',position=.4}
+check(not learner:position('60002') and not learner:position('60003'),"asset metadata never bypasses execution or movement filters")
+learner:sample('124572427631698',.96,false)
+check(not learner:position('124572427631698'),"collecting live samples suppress asset fallback")
+check(not learner.model.rows['73807165586659'],"metadata fallback does not fabricate completed-playback samples")
 ui:Unload()
 print("PASS: "..count.." auto-parry offline assertions. Combat success unverified.")

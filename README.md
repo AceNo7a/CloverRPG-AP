@@ -14,9 +14,13 @@ Two consistent completed combat playbacks establish a local timing profile. Cont
 
 v6.1 accepts exact `HitWindow` and `Attack` marker names, plus identically named keyframes. This enables learning for the observed Wolf Bite Pounce and Tail Sweep animations without hardcoding their timings. Distinct signals within 25 ms of animation time count as one impact; repeated signals or separated impacts block that profile as ambiguous. Attack profiles use the same cache and reporting queue as HitWindow profiles.
 
-Distance and timing bounds remain internal: 8-stud input range, 40-stud observation radius, 0.7-second missed-attempt cooldown, 0.12-second F hold and 120 ms predictive lead converted using current playback speed. These are implementation defaults, not a guaranteed parry window. Bundled candidates require place 8248288152/version 68598 and current combat classification. The script does not infer authoritative parry success or automatically optimize the lead based on success.
+Distance and timing bounds remain internal: 8-stud input range, with a 12-stud allowance only for the four identified attacks on NPCs named Wolf, 40-stud observation radius, 0.7-second missed-attempt cooldown, 0.12-second F hold and 120 ms predictive lead converted using current playback speed. Players and other moves retain 8 studs. The wolf allowance addresses captured 8.03/9.63-stud skips; it is a bounded estimate, not a measured universal hitbox. Bundled candidates require place 8248288152/version 68598 and current combat classification. The script does not infer authoritative parry success or automatically optimize the lead based on success.
 
-New attacks need usable markers and completed observations; first encounters are not protected. Nearby attacks may target somebody else. There is no invulnerability or universal parry guarantee.
+v6.3 also reads exact timing markers from animation assets when live callbacks are unavailable. Empty primary-provider clips trigger the sequence-provider fallback. All returned provider objects are cloned before inspection/cleanup; destroying shared provider instances could empty the local animation cache. The same combat classification applies, and looping, empty, oversized or ambiguous multi-impact clips are rejected. Up to 32 distinct combat assets are fetched per run with at most two outstanding requests. The four wolf IDs are requested at startup; other eligible IDs are requested when observed. Nothing is queued retroactively after a late asset result.
+
+Ready live observations take priority. Collecting/blocked/variable live profiles suppress the asset fallback. Asset profiles have separate `asset marker` provenance: they do not fabricate completed samples, persist to the learned cache, or get submitted as learned Discord reports. Their source is fetched again on rerun. They can support future playback without waiting for two live callbacks; first encounters are not guaranteed to be protected. Nearby attacks may target somebody else. There is no invulnerability or universal parry guarantee.
+
+**Updating from v6.2 or earlier:** restart Roblox before running v6.3, because earlier audit cleanup may have emptied shared animation objects in the current process. Reloading the script cannot restore destroyed cached clip contents. Existing learned timing files are preserved. Confirm v6.3, enable Auto parry, and avoid Test F during the encounter: that button deliberately switches auto OFF for a single manual test.
 
 Profiles and successful-report fingerprints persist in `clover_timings_v5_<place>.json` (the existing compatible cache format). Entries expire after seven days and are rejected on place-version changes. Unsupported file APIs leave session-only learning. Background audits run after startup and approximately every five minutes; they are bounded and do not stop auto parry.
 
@@ -31,6 +35,8 @@ The client sends at most six changed profiles per batch, at least 60 seconds apa
 Reports are untrusted candidates, not proof of successful parries or independent observers. They **do not automatically modify GitHub**. Maintainers review Discord evidence before updating `bundledProfiles` and its game-version scope. Rerun the loader to receive a release update.
 
 ## Verification
+
+v6.3 (2026-10-27): 171 Lua assertions passed, including shared-cache preservation, empty-provider fallback, asset validation, zero-length playback prediction, movement/execution filtering and bounded NPC-only wolf reach. Live provider probes recovered Bite Pounce's Attack at 0.957916677 and Tail Sweep's Attack at 1.003749967 animation seconds before old cleanup emptied those provider objects. Repeated provider calls returned the same Instance; cleaning private copies preserved 10- and 47-frame test assets. The already affected session still needs restart; restored live callbacks and new combat outcomes have not been verified.
 
 v6.2 adds bounded local diagnostics for missing markers: track starts, subscription results/errors, delayed snapshots at 0.25/1.25/3 seconds, length becoming available, playing-state changes, named keyframes, Stopped/Ended callbacks, reused tracks, seeks, expiry and active tracks at export. Successful subscription does not prove a marker exists or will fire. The 300-line learner buffer reports overwritten lines. Diagnostics stay in **Copy logs** and are not sent to Discord.
 
@@ -51,5 +57,6 @@ lua tests/auto_parry_checks.lua clover_auto_parry.lua
 lua tests/hitwindow_model_checks.lua clover_auto_parry.lua
 lua tests/timing_audit_checks.lua clover_auto_parry.lua
 lua tests/profile_support_checks.lua clover_auto_parry.lua
+lua tests/asset_marker_checks.lua clover_auto_parry.lua
 node relay/checks.mjs
 ```
