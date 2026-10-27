@@ -20,7 +20,7 @@ check(saves==1 and calls==0,'cache saves without opting into reporting')
 p.enabled=true; p:tick(1,model.rows,function() return true end)
 check(calls==1 and p.sent['10'] and saves==2,'successful report acknowledged and dedupe persisted')
 check(lastPayload.profiles[1].id=='10' and lastPayload.profiles[1].marker==.4 and lastPayload.place==8248288152,'report has numeric timing evidence')
-local keys={schema=true,version=true,place=true,placeVersion=true,evidence=true,profiles=true}
+local keys={schema=true,version=true,source=true,place=true,placeVersion=true,evidence=true,profiles=true}
 for k in pairs(lastPayload) do assert(keys[k],'unexpected report field') end
 check(not lastPayload.player and not lastPayload.logs and not lastPayload.jobId,'no identity or raw-log fields')
 p:tick(62,model.rows,function() return true end)
@@ -62,4 +62,31 @@ p=newStore(options); p.enabled=true; p:tick(0,model.rows,function() return true 
 check(p.busy,'one outstanding async request')
 p.enabled=false; options.pending()
 check(not p.busy and not next(p.sent),'turning sharing off cancels queued request before dispatch')
+options.spawn=function(fn) fn() end
+options.send=function(payload) lastPayload=payload;return 204 end
+options.assets={['10']={status='ready',position=.4,length=1.7,provider='AnimationClipProvider',updatedAt=now}}
+local assetStore=newStore(options);assetStore.enabled=true
+assetStore:tick(0,model.rows,function() return true end)
+assetStore:tick(61,model.rows,function() return true end)
+check(lastPayload.source=='asset' and lastPayload.profiles[1].samples==nil and lastPayload.profiles[1].spread==nil,'asset reports carry distinct provenance without fabricated samples')
+check(assetStore.assetSent['10'] and assetStore.sent['10']==nil,'asset dedupe is separate from live timing dedupe')
+local cache=assetStore:pack(model.rows)
+local restoreOptions={};for k,v in pairs(options) do restoreOptions[k]=v end;restoreOptions.assets={}
+local again=newStore(restoreOptions);again:restore(cache,{},now)
+check(again.assets['10'].position==.4 and again.assetSent['10']==assetStore.assetSent['10'],'asset timing and report fingerprint survive reload')
+check(#again:batch({},function() return true end,'asset').profiles==0,'restored asset report is not duplicated')
+again.assets['10'].position=.43
+check(#again:batch({},function() return true end,'asset').profiles==1,'changed asset timing is reportable')
+check(#again:batch({},function() return false end,'asset').profiles==0,'asset reports still require current combat classification')
+restoreOptions.assets={};local expired=newStore(restoreOptions);expired:restore(cache,{},now+8*86400)
+check(next(expired.assets)==nil,'expired asset cache rejected')
+cache.assets['10'].position=0/0;restoreOptions.assets={};local invalid=newStore(restoreOptions);invalid:restore(cache,{},now)
+check(next(invalid.assets)==nil,'nonfinite cached asset rejected')
+cache.assets['10'].position=.4;cache.assets['10'].provider='untrusted';invalid:restore(cache,{},now)
+check(next(invalid.assets)==nil,'unknown cached provider rejected')
+cache.assets=nil
+check(invalid:restore(cache,{},now),'old learned-only cache remains compatible')
+options.send=function() return 429,180 end
+local retryAssets=newStore(options);retryAssets.enabled=true;retryAssets:tick(0,{},function() return true end)
+check(not next(retryAssets.assetSent) and retryAssets.nextReport==180,'failed asset report remains pending with backoff')
 print('PASS: '..n..' persistence/reporting assertions.')

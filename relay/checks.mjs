@@ -19,6 +19,15 @@ check(!validate({...body,profiles:Array(7).fill(body.profiles[0])}),'bound batch
 check((await worker.fetch(req({...body,username:'private',logs:'private',evidence:'@everyone'}),env)).status===204,'relay confirms delivery');
 check(!JSON.stringify(outbound).includes('private') && !outbound.content.includes('@everyone'),'strip arbitrary client text');
 check(outbound.allowed_mentions.parse.length===0,'disable mentions');
+check(outbound.content.startsWith('Clover LEARNED'),'legacy clients are labeled learned');
+const asset={...body,version:6,source:'asset',profiles:[{id:'12345',marker:.4,length:1.7,provider:'AnimationClipProvider'}]};
+check(validate(asset)?.source==='asset','accept bounded asset metadata');
+check(!validate({...asset,source:'anything'}),'reject unknown provenance');
+check(!validate({...asset,profiles:[{...asset.profiles[0],samples:2}]}),'reject fabricated live samples in asset reports');
+check(!validate({...asset,profiles:[{...asset.profiles[0],length:.3}]}),'reject marker beyond clip duration');
+check(!validate({...asset,profiles:[{...asset.profiles[0],provider:'@everyone'}]}),'reject arbitrary provider text');
+check((await worker.fetch(req(asset),env)).status===204 && outbound.content.startsWith('Clover ASSET'),'asset delivery gets a separate visible label');
+check(!outbound.content.includes('"samples"') && outbound.content.includes('no live playback samples'),'asset evidence cannot masquerade as learned observations');
 check((await worker.fetch(new Request('https://relay.example/report',{method:'POST',body:'x'.repeat(4097)}),env)).status===413,'bound body while reading');
 check((await worker.fetch(new Request('https://relay.example/report',{method:'POST',body:'bad JSON'}),env)).status===400,'reject malformed JSON');
 check((await worker.fetch(req(),{})).status===503,'fail closed without private configuration');

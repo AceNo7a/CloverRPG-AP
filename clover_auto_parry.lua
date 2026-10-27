@@ -140,12 +140,17 @@ end
 -- JSON data only. Never loads code from the cache or reporting endpoint.
 local function newProfileSupport(options)
     local p = { dirty=false, busy=false, nextSave=0, nextReport=0, failures=0,
-        sent={}, enabled=false, available=type(options.send)=="function",
+        sent={}, assetSent={}, assets=options.assets or {}, nextKind="learned", enabled=false, available=type(options.send)=="function",
         status="Reporting OFF", diskStatus="Session only" }
     local function finite(v, lo, hi)
         return type(v)=="number" and v==v and v>=lo and v<=hi
     end
     local function validId(id) return type(id)=="string" and #id<=20 and id:match("^%d+$") end
+    local function validAsset(row,now)
+        return type(row)=="table" and finite(row.position,.03,8) and finite(row.length,.03,60)
+            and row.position<row.length and finite(row.updatedAt,now-7*86400,now+60)
+            and (row.provider=="AnimationClipProvider" or row.provider=="KeyframeSequenceProvider")
+    end
     function p:restore(data, rows, now)
         if type(data)~="table" or data.schema~=1 or data.place~=options.place
             or data.placeVersion~=options.placeVersion or type(data.rows)~="table" then return false end
@@ -167,10 +172,21 @@ local function newProfileSupport(options)
                 end
             end
         end
+        if type(data.assets)=="table" then
+            local n=0
+            for id,row in pairs(data.assets) do
+                n=n+1; if n>32 then break end
+                if validId(id) and validAsset(row,now) then
+                    self.assets[id]={status="ready",position=row.position,length=row.length,
+                        provider=row.provider,updatedAt=row.updatedAt,reason="restored asset metadata"}
+                    if type(row.sent)=="string" and #row.sent<100 then self.assetSent[id]=row.sent end
+                end
+            end
+        end
         return true
     end
     function p:pack(rows)
-        local out={schema=1,place=options.place,placeVersion=options.placeVersion,rows={}}
+        local out={schema=1,place=options.place,placeVersion=options.placeVersion,rows={},assets={}}
         local count=0
         for id,row in pairs(rows) do
             if count>=256 then break end
@@ -179,6 +195,14 @@ local function newProfileSupport(options)
                 out.rows[id]={samples=samples,blocked=row.blocked==true,
                     updatedAt=row.updatedAt or options.time(),sent=self.sent[id]}
                 count=count+1
+            end
+        end
+        local n=0
+        for id,row in pairs(self.assets) do
+            if n>=32 then break end
+            if validId(id) and row.status=="ready" and validAsset(row,options.time()) then
+                out.assets[id]={position=row.position,length=row.length,provider=row.provider,
+                    updatedAt=row.updatedAt,sent=self.assetSent[id]}; n=n+1
             end
         end
         return out
@@ -203,22 +227,29 @@ local function newProfileSupport(options)
         -- Repeated observations/jitter within 10 ms do not generate new reports.
         return row.status..":"..math.floor((row.position or 0)*100+.5)
     end
-    function p:batch(rows, allowed)
+    function p:batch(rows, allowed, kind)
+        kind=kind or "learned"
+        if kind=="asset" then rows=self.assets end
         local ids={}; for id in pairs(rows) do ids[#ids+1]=id end; table.sort(ids)
         local out,keys={},{}
         for _,id in ipairs(ids) do
             local row=rows[id]
-            if allowed(id) and #row.samples>=2 and row.status=="ready" and not row.blocked then
-                local key=self:fingerprint(row)
-                if self.sent[id]~=key then
-                    out[#out+1]={id=id,marker=row.position,spread=row.spread,samples=#row.samples}
+            local asset=kind=="asset"
+            local qualifies=asset and validAsset(row,options.time()) or (not asset and #row.samples>=2 and not row.blocked)
+            if allowed(id) and qualifies and row.status=="ready" then
+                local key=asset and ("asset:"..math.floor(row.position*100+.5)..":"..math.floor(row.length*100+.5)) or self:fingerprint(row)
+                local sent=asset and self.assetSent or self.sent
+                if sent[id]~=key then
+                    out[#out+1]=asset and {id=id,marker=row.position,length=row.length,provider=row.provider}
+                        or {id=id,marker=row.position,spread=row.spread,samples=#row.samples}
                     keys[id]=key
                     if #out>=6 then break end
                 end
             end
         end
-        return {schema=1,version=6,place=options.place,placeVersion=options.placeVersion,
-            evidence="consistent combat marker; parry success unverified",profiles=out},keys
+        return {schema=1,version=6,source=kind,place=options.place,placeVersion=options.placeVersion,
+            evidence=kind=="asset" and "animation asset metadata; no live sample count; parry success unverified"
+                or "consistent combat marker; parry success unverified",profiles=out},keys
     end
     function p:tick(now, rows, allowed)
         if self.busy then return end
@@ -232,13 +263,16 @@ local function newProfileSupport(options)
                 if self.dirty and now>=self.nextSave then self.nextSave=now+5; self:save(rows) end
                 if not self.enabled or now<self.nextReport or not options.alive() then return end
                 self.nextReport=now+60
-                local payload,keys=self:batch(rows,allowed)
+                local payload,keys=self:batch(rows,allowed,self.nextKind)
+                if #payload.profiles==0 then payload,keys=self:batch(rows,allowed,self.nextKind=="asset" and "learned" or "asset") end
                 if #payload.profiles==0 then self.status="Reporting ON: no new ready timings"; return end
                 if not options.send then self.status="No reporting endpoint/request API"; return end
                 local success,code,retry=pcall(options.send,payload)
                 if success and type(code)=="number" and code>=200 and code<300 then
-                    for id,key in pairs(keys) do self.sent[id]=key end
-                    self.failures=0; self.dirty=true; self.status="Sent "..#payload.profiles.." timing candidates"
+                    local sent=payload.source=="asset" and self.assetSent or self.sent
+                    for id,key in pairs(keys) do sent[id]=key end
+                    self.nextKind=payload.source=="asset" and "learned" or "asset"
+                    self.failures=0; self.dirty=true; self.status="Sent "..#payload.profiles.." "..payload.source.." timing candidates"
                     self:save(rows)
                 else
                     self.failures=math.min(self.failures+1,5)
@@ -417,7 +451,7 @@ local auditSeeds = { "86722279259826", "107811934597910", "122307357536158", "99
     "10017994824", "9839904022", "10017151218", "10036138066", "10028752861", "10059485766" }
 local order = { "86722279259826", "107811934597910", "122307357536158", "99787918237880" }
 local config = { radius = 8, cooldown = 0.7, hold = 0.12, offset = 0, guardsOnly = false, heavyTrial = false }
-local state = { version = 6, release = "6.3", alive = true, enabled = false, focused = true, connections = {}, animators = {},
+local state = { version = 6, release = "6.4", alive = true, enabled = false, focused = true, connections = {}, animators = {},
     logs = {}, attempts = 0, detected = 0, held = false, releaseAt = 0, testAt = nil }
 env.CloverAutoParry = state
 local scheduler = newScheduler()
@@ -455,7 +489,7 @@ if reportUrl=="" and http and type(read)=="function" then
     end
 end
 local cachePath="clover_timings_v5_"..tostring(game.PlaceId)..".json"
-local storage=newProfileSupport({place=game.PlaceId,placeVersion=game.PlaceVersion or 0,time=os.time,
+local storage=newProfileSupport({place=game.PlaceId,placeVersion=game.PlaceVersion or 0,time=os.time,assets=learning.assets,
     alive=function() return state.alive end,
     spawn=task and task.spawn,
     read=type(read)=="function" and function() return read(cachePath) end or nil,
@@ -466,7 +500,7 @@ local storage=newProfileSupport({place=game.PlaceId,placeVersion=game.PlaceVersi
         local direct=reportUrl:match("^https://discord%.com/api/webhooks/")
         local body=payload
         if direct then
-            body={content="Clover timing candidates (NOT verified parry success)\n```json\n"..
+            body={content="Clover "..payload.source.." timing candidates (NOT verified parry success)\n```json\n"..
                 http:JSONEncode(payload).."\n```",allowed_mentions={parse={}}}
         end
         local url=direct and (reportUrl.."?wait=true") or reportUrl
@@ -483,6 +517,7 @@ local storage=newProfileSupport({place=game.PlaceId,placeVersion=game.PlaceVersi
 storage.enabled=storage.available
 storage.status=storage.enabled and "Automatic timing reporting ON" or "Reporting unavailable"
 storage:load(learning.model.rows)
+for _ in pairs(learning.assets) do learning.assetCount=learning.assetCount+1 end
 state.storage=storage
 
 local function clean(value) return tostring(value):gsub("[%c]", " "):sub(1, 160) end
@@ -717,6 +752,7 @@ function learning:fetchAssets()
             row.status=ok and position and "ready" or "unavailable"
             row.position=ok and position or nil; row.length=length; row.provider=provider
             row.reason=ok and (reason or "validated asset marker") or clean(position)
+            if row.status=="ready" then row.updatedAt=os.time(); storage.dirty=true end
             self:note("ASSET_TIMING id="..id.." status="..row.status.." position="..tostring(row.position).." provider="..tostring(provider).." reason="..tostring(row.reason))
         end)
     end
@@ -858,7 +894,7 @@ function learning:tick(now)
 end
 function learning:export()
     for track,item in pairs(self.active) do self:trace("TRACK_AT_EXPORT",track,item) end
-    local lines={"CLOVER MARKER LEARNING v6.3 | place="..game.PlaceId,
+    local lines={"CLOVER MARKER LEARNING v6.4 | place="..game.PlaceId,
         "Accepted names: HitWindow, Attack. Movement and executions remain excluded.",
         "Ready = consistent marker position; NOT confirmed parry success. First encounters are not protected by learning.",
         "lead_seconds="..self.lead.." enabled="..tostring(self.enabled).." skipped_tracks="..self.skipped.." overwritten_diagnostics="..self.overwritten,
@@ -1032,7 +1068,7 @@ local function text(y, h, value)
         BackgroundTransparency = 1, Text = value, TextColor3 = Color3.fromRGB(226, 232, 245),
         Font = Enum.Font.Gotham, TextSize = 13, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left })
 end
-local title=text(10,26,"Clover Auto Parry v6.3")
+local title=text(10,26,"Clover Auto Parry v6.4")
 title.Active=true
 text(40,36,"NPCs + players · automatic learning and recording\nF7 toggles auto parry; F8 hides this panel.")
 local function button(x,y,w,caption,callback)
@@ -1057,7 +1093,7 @@ local learningStats=text(230,22,"Learning and discovery running")
 learningStats.TextSize=11
 local storageStats=text(255,34,storage.status)
 storageStats.TextSize=11
-text(291,40,"Learned timing summaries are automatically sent to Discord. No player names, user IDs or raw logs are sent.")
+text(291,40,"Learned and asset timings are saved and sent separately to Discord. No names, user IDs or raw logs are sent.")
 local function copyText(body)
     local clipboard = setclipboard or toclipboard or env.setclipboard or env.toclipboard
     local ok = type(clipboard) == "function" and pcall(clipboard, body)

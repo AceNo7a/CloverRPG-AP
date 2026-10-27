@@ -7,15 +7,25 @@ export function validate(data) {
       !Number.isSafeInteger(data.placeVersion) || data.placeVersion < 0 ||
       !Array.isArray(data.profiles) || data.profiles.length < 1 || data.profiles.length > 6) return null;
   const profiles=[];
+  const source=data.source ?? 'learned';
+  if (!['learned','asset'].includes(source)) return null;
   for (const row of data.profiles) {
     if (!row || typeof row.id !== 'string' || !/^\d{1,20}$/.test(row.id) ||
-        !finite(row.marker,.03,8) || !finite(row.spread,0,.04) ||
-        !Number.isInteger(row.samples) || row.samples<2 || row.samples>5) return null;
-    profiles.push({id:row.id,marker:row.marker,spread:row.spread,samples:row.samples});
+        !finite(row.marker,.03,8)) return null;
+    if (source==='asset') {
+      if (!finite(row.length,.03,60) || row.marker>=row.length ||
+          !['AnimationClipProvider','KeyframeSequenceProvider'].includes(row.provider) ||
+          row.samples!==undefined || row.spread!==undefined) return null;
+      profiles.push({id:row.id,marker:row.marker,length:row.length,provider:row.provider});
+    } else {
+      if (!finite(row.spread,0,.04) || !Number.isInteger(row.samples) || row.samples<2 || row.samples>5) return null;
+      profiles.push({id:row.id,marker:row.marker,spread:row.spread,samples:row.samples});
+    }
   }
   // Strictly rebuild the outbound payload: names, logs and arbitrary text cannot pass through.
-  return {schema:1,version:data.version,place:data.place,placeVersion:data.placeVersion,
-    evidence:'Untrusted client candidate; combat-marker consistency, NOT verified parry success',profiles};
+  return {schema:1,version:data.version,source,place:data.place,placeVersion:data.placeVersion,
+    evidence:source==='asset' ? 'Untrusted asset metadata; no live playback samples, NOT verified parry success'
+      : 'Untrusted learned timing; combat-marker consistency, NOT verified parry success',profiles};
 }
 
 export default {
@@ -42,7 +52,7 @@ export default {
       if (!data) return json({error:'invalid timing candidate'},400);
       const response=await fetch(env.DISCORD_WEBHOOK+'?wait=true',{
         method:'POST', headers:{'Content-Type':'application/json'}, signal:AbortSignal.timeout(10000),
-        body:JSON.stringify({content:'Clover timing candidates\n```json\n'+JSON.stringify(data)+'\n```',allowed_mentions:{parse:[]}})
+        body:JSON.stringify({content:(data.source==='asset' ? 'Clover ASSET timing candidates' : 'Clover LEARNED timing candidates')+'\n```json\n'+JSON.stringify(data)+'\n```',allowed_mentions:{parse:[]}})
       });
       if (response.status===429) {
         let retry=60;
