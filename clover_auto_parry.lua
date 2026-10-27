@@ -1,4 +1,4 @@
--- Clover auto parry v6.1: experimental HitWindow/Attack learning for later encounters.
+-- Clover auto parry v6.2: bounded combat-track diagnostics and HitWindow/Attack learning.
 -- Run this entire file. Starts OFF. No remote hooks or packet replay.
 -- Automatic reporting sends numeric timing candidates only; no remote code is fetched.
 -- Manual F timings are starting estimates, not measured server parry windows.
@@ -10,8 +10,8 @@ local function newScheduler()
     function s:clear() self.pending = {} end
     function s:add(track, actor, id, target, now, position)
         -- Ignore already-late playback notifications instead of sending a stale F.
-        if position > target + 0.08 then if self.onSkip then self.onSkip({id=id},"late notification") end; return false end
-        self.pending[track] = { actor = actor, id = id, target = target, created = now }
+        if position > target + 0.08 then if self.onSkip then self.onSkip({id=id,actor=actor,track=track},"late notification") end; return false end
+        self.pending[track] = { actor = actor, track = track, id = id, target = target, created = now }
         return true
     end
     function s:step(now, cooldown, inspect, press)
@@ -377,7 +377,7 @@ local auditSeeds = { "86722279259826", "107811934597910", "122307357536158", "99
     "10017994824", "9839904022", "10017151218", "10036138066", "10028752861", "10059485766" }
 local order = { "86722279259826", "107811934597910", "122307357536158", "99787918237880" }
 local config = { radius = 8, cooldown = 0.7, hold = 0.12, offset = 0, guardsOnly = false, heavyTrial = false }
-local state = { version = 6, release = "6.1", alive = true, enabled = false, focused = true, connections = {}, animators = {},
+local state = { version = 6, release = "6.2", alive = true, enabled = false, focused = true, connections = {}, animators = {},
     logs = {}, attempts = 0, detected = 0, held = false, releaseAt = 0, testAt = nil }
 env.CloverAutoParry = state
 local scheduler = newScheduler()
@@ -393,7 +393,7 @@ if not env.__CloverHitWindowV4 or env.__CloverHitWindowV4.session ~= sessionKey 
     env.__CloverHitWindowV4 = { session = sessionKey, rows = {} }
 end
 local learning = { enabled = true, lead = .12, radius = 40, active = {}, activeCount = 0,
-    paths = {}, registryComplete = false, nextRefresh = 0, logs = {}, skipped = 0,
+    paths = {}, registryComplete = false, nextRefresh = 0, logs = {}, skipped = 0, serial = 0, overwritten = 0,
     model = newHitWindowModel(env.__CloverHitWindowV4.rows) }
 state.learning = learning
 local httpOK,http=pcall(function() return game:GetService("HttpService") end)
@@ -484,7 +484,7 @@ function discovery:mark(kind)
     end
 end
 function discovery:export()
-    local lines = { "CLOVER DISCOVERY v6 | place=" .. tostring(game.PlaceId),
+    local lines = { "CLOVER DISCOVERY v"..state.release.." | place=" .. tostring(game.PlaceId),
         "Unknown means unmapped animation, NOT confirmed attack. Known means ID in prototype; timing not universally validated.",
         "Health/F/marker correlations are NOT authoritative hit or parry-success events.",
         string.format("radius=%s loops=%s recording=%s overwritten_events=%d skipped_catalog_observations=%d skipped_track_observers=%d",
@@ -508,7 +508,6 @@ local function log(message)
     state.status = message
     if statusLabel then statusLabel.Text = message end
 end
-scheduler.onSkip=function(item,reason) log("SKIP id="..item.id.." reason="..reason) end
 local function connect(signal, callback)
     local c = signal:Connect(callback)
     state.connections[#state.connections + 1] = c
@@ -591,9 +590,26 @@ local function distance(actor)
     if not a or not b then return math.huge end
     return (a.Position - b.Position).Magnitude
 end
+scheduler.onSkip=function(item,reason)
+    local detail=""
+    local ok,value=pcall(function()
+        return string.format(" distance=%.2f range=%.2f pos=%.4f speed=%.3f",distance(item.actor),
+            config.radius,item.track.TimePosition,item.track.Speed)
+    end)
+    detail=ok and value or " distance=unavailable track=unavailable"
+    log("SKIP id="..item.id.." reason="..reason..detail)
+end
 function learning:note(message)
     self.logs[#self.logs+1] = string.format("[%.6f] %s", os.clock(), message)
-    if #self.logs > 300 then table.remove(self.logs,1) end
+    if #self.logs > 300 then table.remove(self.logs,1); self.overwritten=self.overwritten+1 end
+end
+function learning:trace(kind,track,item,extra)
+    local ok,detail=pcall(function()
+        return string.format(" age=%.3f pos=%.4f length=%.4f speed=%.3f playing=%s loop=%s distance=%.2f invalid=%s marker=%s",
+            os.clock()-item.started,track.TimePosition,track.Length,track.Speed,tostring(track.IsPlaying),
+            tostring(track.Looped),distance(item.actor),tostring(item.invalid==true),tostring(item.position))
+    end)
+    self:note(kind.." track="..item.token.." id="..item.id..(ok and detail or " snapshot_error="..clean(detail))..(extra or ""))
 end
 function learning:refresh()
     self.nextRefresh = os.clock() + 5
@@ -652,16 +668,22 @@ function learning:close()
 end
 function learning:observe(actor, track, id)
     if not self.enabled or not actor or actor == player.Character or not id then return end
+    if self.active[track] then self:trace("TRACK_REUSED",track,self.active[track]) end
     self:disconnect(track)
     if not actor:IsDescendantOf(workspace) or distance(actor) > self.radius or track.Looped then return end
     local humanoid=actor:FindFirstChildOfClass("Humanoid")
     if humanoid and humanoid.Health <= 0 then return end
     if not self:allowed(id) then return end
-    if not tostring(track.Priority):find("Action",1,true) or track.TimePosition > .05 then return end
-    if self.activeCount >= 64 then self.skipped=self.skipped+1; return end
+    if not tostring(track.Priority):find("Action",1,true) or track.TimePosition > .05 then
+        self:note("OBSERVE_SKIP id="..id.." reason=priority_or_late_start priority="..clean(track.Priority).." pos="..track.TimePosition); return
+    end
+    if self.activeCount >= 64 then self.skipped=self.skipped+1; self:note("OBSERVE_SKIP id="..id.." reason=observer_limit"); return end
+    self.serial=self.serial+1
     local item={ id=id, actor=actor, started=os.clock(), connections={}, seenSignals={}, maximum=track.TimePosition,
+        token=self.serial, checkpoint=1, loaded=track.Length>0, keyframes=0, previousPlaying=track.IsPlaying,
         previous=track.TimePosition, lastTime=os.clock(), lastSpeed=track.Speed }
     self.active[track]=item; self.activeCount=self.activeCount+1
+    self:trace("TRACK_START",track,item," priority="..clean(track.Priority))
     local function reached(source, name)
         if self.active[track] ~= item or not self.enabled then return end
         local ok, err=pcall(function()
@@ -680,43 +702,50 @@ function learning:observe(actor, track, id)
                 self:note("BLOCKED id="..id.." multiple timing markers")
             else
                 item.position=position; item.source=source; item.seenSignals[signalKey]=true
-                self:note(string.format("TIMING_MARKER id=%s name=%s pos=%.5f source=%s",id,name,position,source))
+                self:note(string.format("TIMING_MARKER id=%s name=%s pos=%.5f source=%s track=%d",id,name,position,source,item.token))
             end
         end)
         if not ok then item.invalid=true; self:note("MARKER_ERROR "..clean(err)) end
     end
     local function finish()
         if self.active[track] ~= item then return end
+        self:trace("TRACK_STOP",track,item)
         local ok, err=pcall(function()
             local length=track.Length
             local complete=length > 0 and math.max(item.maximum,track.TimePosition) >= length-.04
             if item.position and not item.multiple and not item.invalid and complete and not track.Looped and self:allowed(id) then
                 self:note("PROFILE id="..id.." "..self:sample(id,item.position,false))
-            elseif item.position then self:note("DISCARDED id="..id.." incomplete, excluded or ambiguous playback") end
+            elseif item.position then self:note("DISCARDED id="..id.." incomplete, excluded or ambiguous playback")
+            else self:note("NO_TIMING_MARKER id="..id.." track="..item.token.." complete="..tostring(complete).." keyframes="..item.keyframes) end
         end)
         if not ok then self:note("FINISH_ERROR "..clean(err)) end
         self:disconnect(track)
     end
-    local function listen(getSignal, callback)
+    local function listen(label,getSignal, callback)
         local ok, c=pcall(function() return getSignal():Connect(callback) end)
         if ok then item.connections[#item.connections+1]=c end
+        self:note("SUBSCRIBE track="..item.token.." id="..id.." signal="..label.." ok="..tostring(ok)..(ok and "" or " error="..clean(c)))
         return ok
     end
     local markerOK=false
     for _,name in ipairs({"HitWindow","Attack"}) do
         local markerName=name
-        local available=listen(function() return track:GetMarkerReachedSignal(markerName) end,
+        local available=listen("marker:"..markerName,function() return track:GetMarkerReachedSignal(markerName) end,
             function() reached("marker",markerName) end)
         markerOK=available or markerOK
     end
-    local keyframeOK=listen(function() return track.KeyframeReached end,function(name)
+    local keyframeOK=listen("KeyframeReached",function() return track.KeyframeReached end,function(name)
+        item.keyframes=item.keyframes+1
+        if item.keyframes<=3 then self:trace("TRACK_KEYFRAME",track,item," name="..clean(name)) end
         if name=="HitWindow" or name=="Attack" then reached("keyframe",name) end
     end)
-    local stopOK=listen(function() return track.Stopped end,finish)
+    local stopOK=listen("Stopped",function() return track.Stopped end,finish)
+    listen("Ended",function() return track.Ended end,function() self:trace("TRACK_ENDED",track,item) end)
     if not stopOK or (not markerOK and not keyframeOK) then
         self:note("UNSUPPORTED_TRACK id="..id); self:disconnect(track)
     end
 end
+local diagnosticCheckpoints={.25,1.25,3}
 function learning:tick(now)
     if now >= self.nextRefresh then self:refresh() end
     local remove={}
@@ -724,19 +753,33 @@ function learning:tick(now)
         local ok, expired=pcall(function()
             local pos, speed=track.TimePosition, track.Speed
             local expected=(now-item.lastTime)*math.max(math.abs(speed),math.abs(item.lastSpeed))
-            if pos < item.previous-.03 or pos-item.previous > expected+.12 then item.invalid=true end
+            if pos < item.previous-.03 or pos-item.previous > expected+.12 then
+                if not item.invalid then self:trace("TRACK_SEEK",track,item," previous="..item.previous.." expected_delta="..expected) end
+                item.invalid=true
+            end
+            if not item.loaded and track.Length>0 then item.loaded=true; self:trace("TRACK_LOADED",track,item) end
+            if item.previousPlaying~=track.IsPlaying then
+                self:trace("TRACK_PLAYING_CHANGED",track,item); item.previousPlaying=track.IsPlaying
+            end
+            if diagnosticCheckpoints[item.checkpoint] and now-item.started>=diagnosticCheckpoints[item.checkpoint] then
+                self:trace("TRACK_CHECK",track,item," checkpoint="..diagnosticCheckpoints[item.checkpoint]); item.checkpoint=item.checkpoint+1
+            end
             item.maximum=math.max(item.maximum,pos); item.previous=pos; item.lastTime=now; item.lastSpeed=speed
-            return now-item.started>12 or not item.actor:IsDescendantOf(workspace)
+            local reason=now-item.started>12 and "timeout" or (not item.actor:IsDescendantOf(workspace) and "actor_removed")
+            if reason then self:trace("TRACK_EXPIRED",track,item," reason="..reason.." keyframes="..item.keyframes) end
+            return reason
         end)
+        if not ok then self:trace("TRACK_READ_ERROR",track,item," error="..clean(expired)) end
         if not ok or expired then remove[#remove+1]=track end
     end
     for _,track in ipairs(remove) do self:disconnect(track) end
 end
 function learning:export()
-    local lines={"CLOVER MARKER LEARNING v6.1 | place="..game.PlaceId,
+    for track,item in pairs(self.active) do self:trace("TRACK_AT_EXPORT",track,item) end
+    local lines={"CLOVER MARKER LEARNING v6.2 | place="..game.PlaceId,
         "Accepted names: HitWindow, Attack. Movement and executions remain excluded.",
         "Ready = consistent marker position; NOT confirmed parry success. First encounters are not protected by learning.",
-        "lead_seconds="..self.lead.." enabled="..tostring(self.enabled).." skipped_tracks="..self.skipped,
+        "lead_seconds="..self.lead.." enabled="..tostring(self.enabled).." skipped_tracks="..self.skipped.." overwritten_diagnostics="..self.overwritten,
         self.registryStatus or "Registry not checked",storage.diskStatus.." | "..storage.status}
     for id,position in pairs(bundledProfiles) do
         local active,origin=self:position(id)
@@ -903,7 +946,7 @@ local function text(y, h, value)
         BackgroundTransparency = 1, Text = value, TextColor3 = Color3.fromRGB(226, 232, 245),
         Font = Enum.Font.Gotham, TextSize = 13, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left })
 end
-local title=text(10,26,"Clover Auto Parry v6.1")
+local title=text(10,26,"Clover Auto Parry v6.2")
 title.Active=true
 text(40,36,"NPCs + players · automatic learning and recording\nF7 toggles auto parry; F8 hides this panel.")
 local function button(x,y,w,caption,callback)
@@ -944,7 +987,7 @@ local function copyText(body)
     end
 end
 button(14,128,174,"Copy logs",function()
-    copyText("CLOVER AUTO PARRY v6 | place="..tostring(game.PlaceId).." | attempts are NOT confirmed successes\n"..
+    copyText("CLOVER AUTO PARRY v"..state.release.." | place="..tostring(game.PlaceId).." | attempts are NOT confirmed successes\n"..
         table.concat(state.logs,"\n").."\n\n"..learning:export().."\n\n"..discovery:export()..
         "\n\nBACKGROUND AUDIT\n"..table.concat(audit.lines,"\n"))
 end)

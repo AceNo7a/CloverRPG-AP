@@ -32,6 +32,12 @@ Reports are untrusted candidates, not proof of successful parries or independent
 
 ## Verification
 
+v6.2 adds bounded local diagnostics for missing markers: track starts, subscription results/errors, delayed snapshots at 0.25/1.25/3 seconds, length becoming available, playing-state changes, named keyframes, Stopped/Ended callbacks, reused tracks, seeks, expiry and active tracks at export. Successful subscription does not prove a marker exists or will fire. The 300-line learner buffer reports overwritten lines. Diagnostics stay in **Copy logs** and are not sent to Discord.
+
+Range skips now include actual root-to-root distance, the unchanged 8-stud limit, playback position and speed. This release does not alter learning qualification, parry timing or reach. To test: rerun the loader, confirm v6.2, observe a short wolf encounter, wait about 13 seconds after the last attack for expiry diagnostics, then select **Copy logs**. Send those logs with the matching video. Auto starts OFF; turn it ON when testing input/range skips.
+
+v6.2 (2026-10-27): 149 Lua assertions passed, including subscription failures, zero-length/delayed-loading tracks, missing stop callbacks, lifecycle expiry without false learning, range measurements and diagnostic-buffer bounds. Actual missing-marker cause remains under investigation.
+
 v6.1 (2026-10-27): 74 auto-parry assertions passed, including simulated Bite Pounce and Tail Sweep learning, playback-speed conversion, duplicate signals, multiple impacts, and movement/execution exclusions. Live combat performance of these two moves remains unverified.
 
 v6 (2026-10-27): 119 Lua assertions and 17 relay assertions passed. Live Madium checks confirmed four buttons, zero settings fields, learning/recording/reporting ON, a completed 1,442-line bounded audit, and delivery of one real learned profile through the public relay to Discord. Public unauthenticated GET returned 200 and invalid POST returned 400. Auto input was left OFF.
