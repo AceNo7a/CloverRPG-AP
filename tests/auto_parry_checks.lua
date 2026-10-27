@@ -169,7 +169,7 @@ tr=swing(6,"59998",otherAnimator)
 check(#ui.discovery.order==before+2,"recording continues with auto OFF")
 click("Copy logs")
 check(clipboard:find("CLOVER AUTO PARRY v6",1,true) and clipboard:find("CLOVER DISCOVERY v6",1,true)
- and clipboard:find("CLOVER MARKER LEARNING v6.5",1,true) and clipboard:find("BACKGROUND AUDIT",1,true),"one export includes attempts, learning, discovery and audit")
+ and clipboard:find("CLOVER MARKER LEARNING v6.5.1",1,true) and clipboard:find("BACKGROUND AUDIT",1,true),"one export includes attempts, learning, discovery and audit")
 setclipboard=nil; click("Copy logs")
 check(ui.export and ui.export.Text,"clipboard fallback remains available")
 ui.export.FocusLost:Fire(); setclipboard=function(v) clipboard=v end
@@ -370,8 +370,8 @@ game.JobId='expanded-bundle-test'; game.PlaceVersion=68598; environment.CloverPa
 asset(combat,'CollectedStrike','111510911006717')
 now=620; dofile(path);ui=environment.CloverAutoParry;learner=ui.learning
 check(math.abs(learner:position('111510911006717')-.4195835590362549)<1e-8,'new player timing available without local observations')
-check(math.abs(learner:position('124572427631698')-.9579166769981384)<1e-8 and select(2,learner:position('124572427631698'))=='bundled asset marker','Bite Pounce is available as an explicitly asset-derived bundle')
-check(math.abs(learner:position('73807165586659')-1.003749966621399)<1e-8,'Tail Sweep available before asynchronous asset fetch')
+check(math.abs(learner:position('124572427631698')-.9583326578140259)<1e-8 and select(2,learner:position('124572427631698'))=='bundled candidate','Bite Pounce uses the newly reviewed learned bundle')
+check(math.abs(learner:position('73807165586659')-1.0037524700164795)<1e-8,'Tail Sweep uses the newly reviewed learned bundle before asset fetch')
 check(not learner.model.rows['124572427631698'] and not ui.storage.sent['111510911006717'],'bundles do not invent local samples or delivery acknowledgements')
 game.PlaceVersion=68599
 check(not learner:position('124572427631698') and not learner:position('111510911006717'),'both bundle sources disabled for other game versions')

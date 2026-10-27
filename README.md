@@ -12,7 +12,7 @@ The GUI has four controls: **Auto parry**, **Test F**, **Copy logs**, and **Unlo
 
 Two consistent completed combat playbacks establish a local timing profile. Continued observations update the median and spread of the last five samples. Ready local profiles override bundled candidates and guard presets. Collecting, variable or multiple-marker local profiles suppress fallback until qualified. Executions, movement, reactions, unclassified animations, loops, interrupted clips and detected seeks remain excluded.
 
-v6.5 includes **16 reviewed learned candidates and 20 asset candidates across 20 animation IDs**, scoped to place 8248288152/version 68598. Fresh installations can use these immediately once their combat paths are classified, before local sampling or asset fetch completes. Bite Pounce and Tail Sweep are explicitly asset-derived; single-sample local entries are not promoted to learned evidence. `timing_candidates.json` records the reviewed source values and provenance. Bundles do not create fictitious local samples or report acknowledgements. Existing local validation takes priority, followed by fetched/restored assets, bundled learned timings, then bundled asset timings.
+v6.5.1 includes **18 reviewed learned candidates and 20 asset candidates across 20 animation IDs**, scoped to place 8248288152/version 68598. Fresh installations can use these immediately once their combat paths are classified, before local sampling or asset fetch completes. Bite Pounce and Tail Sweep now have reviewed learned candidates as well as their retained asset candidates; single-sample local entries are not promoted to learned evidence. `timing_candidates.json` records the reviewed source values and provenance. Bundles do not create fictitious local samples or report acknowledgements. Existing local validation takes priority, followed by fetched/restored assets, bundled learned timings, then bundled asset timings.
 
 v6.1 accepts exact `HitWindow` and `Attack` marker names, plus identically named keyframes. This enables learning for the observed Wolf Bite Pounce and Tail Sweep animations without hardcoding their timings. Distinct signals within 25 ms of animation time count as one impact; repeated signals or separated impacts block that profile as ambiguous. Attack profiles use the same cache and reporting queue as HitWindow profiles.
 
@@ -39,6 +39,8 @@ Reports are untrusted candidates, not proof of successful parries or independent
 Values matching the current release's bundled fingerprints are not resubmitted as new discoveries. New qualifying IDs and materially changed marker timings still report automatically through the relay, labeled LEARNED or ASSET. This is per-client deduplication; independent clients may report the same new candidate. Reports remain subject to rate limits, retry, client uptime and request-API availability. After review, a maintainer must publish another release to distribute new entries to everyone.
 
 ## Verification
+
+v6.5.1 adds the reported three-sample Bite Pounce and Tail Sweep learned candidates, corroborated by the new capture. Their independent asset metadata is retained.
 
 v6.5 (2026-10-27): 192 Lua assertions pass, including fresh-install access to collected player/wolf timings, game-version scoping, separate bundle provenance, local validation precedence, suppression of known bundled reports, and reporting of new/changed timings. No relay change is required.
 

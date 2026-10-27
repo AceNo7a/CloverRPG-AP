@@ -1,4 +1,4 @@
--- Clover auto parry v6.5: reviewed learned/asset bundles with separate discovery reporting.
+-- Clover auto parry v6.5.1: reviewed learned/asset bundles with separate discovery reporting.
 -- Run this entire file. Starts OFF. No remote hooks or packet replay.
 -- Automatic reporting sends numeric timing candidates only; no remote code is fetched.
 -- Manual F timings are starting estimates, not measured server parry windows.
@@ -409,6 +409,8 @@ local options = type(env.CloverParryOptions)=="table" and env.CloverParryOptions
 -- Reviewed from the supplied 2026-10-27 capture. Marker positions, not parry windows.
 -- Maintainers add reviewed Discord candidates here and release a new GitHub revision.
 local bundledProfiles = {
+    ["73807165586659"] = 1.0037524700164795,
+    ["124572427631698"] = 0.9583326578140259,
     ["10017994824"] = 0.5874996781349182,
     ["10250846568"] = 0.22083328664302826,
     ["107811934597910"] = 0.42083311080932617,
@@ -492,7 +494,7 @@ local auditSeeds = { "86722279259826", "107811934597910", "122307357536158", "99
     "10017994824", "9839904022", "10017151218", "10036138066", "10028752861", "10059485766" }
 local order = { "86722279259826", "107811934597910", "122307357536158", "99787918237880" }
 local config = { radius = 8, cooldown = 0.7, hold = 0.12, offset = 0, guardsOnly = false, heavyTrial = false }
-local state = { version = 6, release = "6.5", alive = true, enabled = false, focused = true, connections = {}, animators = {},
+local state = { version = 6, release = "6.5.1", alive = true, enabled = false, focused = true, connections = {}, animators = {},
     logs = {}, attempts = 0, detected = 0, held = false, releaseAt = 0, testAt = nil }
 env.CloverAutoParry = state
 local scheduler = newScheduler()
@@ -938,7 +940,7 @@ function learning:tick(now)
 end
 function learning:export()
     for track,item in pairs(self.active) do self:trace("TRACK_AT_EXPORT",track,item) end
-    local lines={"CLOVER MARKER LEARNING v6.5 | place="..game.PlaceId,
+    local lines={"CLOVER MARKER LEARNING v6.5.1 | place="..game.PlaceId,
         "Accepted names: HitWindow, Attack. Movement and executions remain excluded.",
         "Ready = consistent marker position; NOT confirmed parry success. First encounters are not protected by learning.",
         "lead_seconds="..self.lead.." enabled="..tostring(self.enabled).." skipped_tracks="..self.skipped.." overwritten_diagnostics="..self.overwritten,
@@ -1118,7 +1120,7 @@ local function text(y, h, value)
         BackgroundTransparency = 1, Text = value, TextColor3 = Color3.fromRGB(226, 232, 245),
         Font = Enum.Font.Gotham, TextSize = 13, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left })
 end
-local title=text(10,26,"Clover Auto Parry v6.5")
+local title=text(10,26,"Clover Auto Parry v6.5.1")
 title.Active=true
 text(40,36,"NPCs + players · automatic learning and recording\nF7 toggles auto parry; F8 hides this panel.")
 local function button(x,y,w,caption,callback)

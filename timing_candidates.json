@@ -99,6 +99,18 @@
       "samples": 2,
       "spread": 5.960464477539063e-08,
       "provenance": "previously reviewed 2026-10-27 capture; retained"
+    },
+    "124572427631698": {
+      "marker": 0.9583326578140259,
+      "spread": 0.004166722297668457,
+      "samples": 3,
+      "provenance": "2026-10-27 user-supplied learned report; corroborated by completed-playback capture"
+    },
+    "73807165586659": {
+      "marker": 1.0037524700164795,
+      "spread": 0.004583835601806641,
+      "samples": 3,
+      "provenance": "2026-10-27 user-supplied learned report; corroborated by completed-playback capture"
     }
   },
   "assets": {
